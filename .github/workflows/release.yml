@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Install Python deps
+        run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: Pack EXE
+        run: |
+          pyinstaller --onefile --name GomokuOnline backend/run.py ^
+            --add-data "frontend\dist;frontend_dist" ^
+            --hidden-import uvicorn.logging ^
+            --hidden-import uvicorn.loops.auto ^
+            --hidden-import uvicorn.loops.asyncio ^
+            --hidden-import uvicorn.protocols.http.auto ^
+            --hidden-import uvicorn.protocols.websockets.auto ^
+            --hidden-import httpx ^
+            --distpath dist\GomokuOnline ^
+            --noconsole
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/GomokuOnline/GomokuOnline.exe
+          generate_release_notes: true
