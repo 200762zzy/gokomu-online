@@ -1,0 +1,37 @@
+# Environment
+backend/.env
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+
+# PyInstaller artifacts
+backend/build/
+backend/*.spec
+build/
+
+# Stale frontend copy in backend
+backend/static/
+
+# Packed distribution env (never ship local API key)
+dist/GomokuOnline/.env
+
+# opencode
+.opencode/
