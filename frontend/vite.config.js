@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
+    allowedHosts: ['.ngrok-free.dev'],
     proxy: {
       '/ws': {
         target: 'ws://localhost:8000',

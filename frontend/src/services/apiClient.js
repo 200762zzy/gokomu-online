@@ -1,5 +1,5 @@
 const API_BASE = '/api'
-const TIMEOUT = 60000
+const TIMEOUT = 25000
 
 function getApiKey() {
   return localStorage.getItem('deepseek_api_key') || ''

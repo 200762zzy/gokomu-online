@@ -16,6 +16,11 @@ const whiteRate = computed(() => {
   if (!props.analysis) return 50
   return Math.round((props.analysis.white_win_rate || 0.5) * 100)
 })
+
+const sourceLabel = computed(() => {
+  if (!props.analysis) return ''
+  return props.analysis.source === 'local' ? '本地评估' : 'DeepSeek AI'
+})
 </script>
 
 <template>
@@ -23,6 +28,7 @@ const whiteRate = computed(() => {
     <h3 class="panel-title">
       AI 胜率分析
       <span v-if="loading" class="loading-spinner"></span>
+      <span v-if="sourceLabel" class="source-badge" :class="props.analysis?.source">{{ sourceLabel }}</span>
     </h3>
 
     <div v-if="!analysis && !loading" class="no-data">
@@ -87,6 +93,21 @@ const whiteRate = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.source-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-left: auto;
+}
+.source-badge.local {
+  background: #e6a81733;
+  color: #e6a817;
+}
+.source-badge.deepseek {
+  background: #667eea33;
+  color: #667eea;
 }
 
 .loading-spinner {
@@ -210,4 +231,5 @@ const whiteRate = computed(() => {
 .move-label-delta.down {
   color: #ff6b6b;
 }
+
 </style>

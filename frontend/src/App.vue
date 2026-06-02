@@ -1,21 +1,33 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useAuthStore } from './stores/auth.js'
 import { audioManager } from './services/audioManager.js'
-import HomeView from './views/HomeView.vue'
-import GameView from './views/GameView.vue'
-import OnlineLobbyView from './views/OnlineLobbyView.vue'
-import OnlineGameView from './views/OnlineGameView.vue'
-import AiGameView from './views/AiGameView.vue'
+import { useIsMobile } from './composables/useIsMobile.js'
+import BottomTabBar from './components/BottomTabBar.vue'
+import HamburgerDrawer from './components/HamburgerDrawer.vue'
 
-const currentView = ref('home')
-const replayGameData = ref(null)
-const onlineGameData = ref(null)
-const aiGameData = ref(null)
+const router = useRouter()
+const route = useRoute()
+const authStore = useAuthStore()
+
+const { isMobile } = useIsMobile()
+const showDrawer = ref(false)
+
 const showApiDialog = ref(false)
 const apiKeyInput = ref(localStorage.getItem('deepseek_api_key') || '')
 const bgmEnabled = ref(true)
 const bgmVolume = ref(0.3)
 const showVolumePanel = ref(false)
+const navItems = [
+  { path: '/', label: '首页', icon: '🏠' },
+  { path: '/lobby', label: '大厅', icon: '🎮', auth: true },
+  { path: '/friends', label: '好友', icon: '👥', auth: true },
+  { path: '/leaderboard', label: '排行榜', icon: '🏆' },
+  { path: '/history', label: '对局记录', icon: '📋', auth: true },
+  { path: '/admin', label: '管理后台', icon: '⚙️', auth: true, admin: true },
+  { path: '/profile', label: '个人', icon: '👤', auth: true },
+]
 
 function toggleBGM() {
   bgmEnabled.value = !bgmEnabled.value
@@ -30,42 +42,6 @@ function setVolume(v) {
 function toggleVolumePanel(e) {
   e.stopPropagation()
   showVolumePanel.value = !showVolumePanel.value
-}
-
-function onStartGame() {
-  replayGameData.value = null
-  currentView.value = 'game'
-}
-
-function onStartOnline() {
-  currentView.value = 'online_lobby'
-}
-
-function onEnterGame(data) {
-  onlineGameData.value = data
-  currentView.value = 'online_game'
-}
-
-function onBackToLobby() {
-  onlineGameData.value = null
-  currentView.value = 'online_lobby'
-}
-
-function onViewReplay(data) {
-  replayGameData.value = data
-  currentView.value = 'game'
-}
-
-function onStartAI(data) {
-  aiGameData.value = data
-  currentView.value = 'ai_game'
-}
-
-function onBack() {
-  currentView.value = 'home'
-  replayGameData.value = null
-  onlineGameData.value = null
-  aiGameData.value = null
 }
 
 function openApiDialog() {
@@ -83,79 +59,72 @@ function saveApiKey() {
   showApiDialog.value = false
 }
 
+function handleLogout() {
+  authStore.logout()
+  router.push('/login')
+}
+
 function onDocumentClick() {
   showVolumePanel.value = false
 }
 
+import { onMounted, onUnmounted } from 'vue'
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
 })
-
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick)
 })
 
-const viewComponent = computed(() => {
-  if (currentView.value === 'home') return HomeView
-  if (currentView.value === 'game') return GameView
-  if (currentView.value === 'online_lobby') return OnlineLobbyView
-  if (currentView.value === 'ai_game') return AiGameView
-  return OnlineGameView
-})
 </script>
 
 <template>
-  <div class="app-container">
-    <header class="app-header">
-      <h1>五子棋在线对战</h1>
-      <nav>
+  <div class="app-layout">
+    <aside v-if="!isMobile" class="sidebar">
+      <div class="sidebar-header">
+        <h1 class="logo" @click="router.push('/')">五子棋</h1>
+      </div>
+      <nav class="sidebar-nav">
+        <router-link
+          v-for="item in navItems"
+          :key="item.path"
+          :to="item.path"
+          class="nav-item"
+          :class="{ active: route.path === item.path }"
+          v-show="!item.auth || (authStore.isAuthenticated && (!item.admin || authStore.user?.is_admin))"
+        >
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-label">{{ item.label }}</span>
+        </router-link>
+      </nav>
+      <div class="sidebar-footer">
         <div class="audio-controls">
-          <button class="btn-audio" @click="toggleBGM" :title="bgmEnabled ? '关闭音乐' : '开启音乐'">
+          <button class="btn-icon" @click="toggleBGM" :title="bgmEnabled ? '关闭音乐' : '开启音乐'">
             {{ bgmEnabled ? '🔊' : '🔇' }}
           </button>
-          <button class="btn-volume" @click="toggleVolumePanel" title="音量调节">🎚️</button>
+          <button class="btn-icon" @click="toggleVolumePanel" title="音量">🎚️</button>
           <div v-if="showVolumePanel" class="volume-panel" @click.stop>
-            <label class="volume-label">BGM 音量</label>
             <input type="range" min="0" max="1" step="0.01" :value="bgmVolume" @input="setVolume(parseFloat($event.target.value))" class="volume-slider" />
           </div>
         </div>
-        <button class="btn-api" @click="openApiDialog" title="配置 DeepSeek API Key">API</button>
-        <button v-if="currentView !== 'home'" class="btn-back" @click="onBack">返回首页</button>
-      </nav>
-    </header>
-    <main class="app-main">
-      <HomeView
-        v-if="currentView === 'home'"
-        @start-game="onStartGame"
-        @start-online="onStartOnline"
-        @start-ai="onStartAI"
-        @view-replay="onViewReplay"
-      />
-      <GameView
-        v-else-if="currentView === 'game'"
-        :replay-game-data="replayGameData"
-        @back-home="onBack"
-      />
-      <OnlineLobbyView
-        v-else-if="currentView === 'online_lobby'"
-        @enter-game="onEnterGame"
-      />
-      <OnlineGameView
-        v-else-if="currentView === 'online_game'"
-        :room-id="onlineGameData?.roomId"
-        :player-color="onlineGameData?.playerColor"
-        :player-name="onlineGameData?.playerName"
-        :opponent-name="onlineGameData?.opponentName"
-        @back-lobby="onBackToLobby"
-      />
-      <AiGameView
-        v-else-if="currentView === 'ai_game'"
-        :difficulty="aiGameData?.difficulty"
-        :player-color="aiGameData?.playerColor"
-        @back-home="onBack"
-      />
+        <button class="btn-icon" @click="openApiDialog" title="API Key">🔑</button>
+        <template v-if="authStore.isAuthenticated">
+          <span class="user-badge" @click="router.push('/profile')">
+            {{ authStore.username }}
+          </span>
+          <button class="btn-icon" @click="handleLogout" title="退出">🚪</button>
+        </template>
+        <button v-else class="btn-login" @click="router.push('/login')">登录</button>
+      </div>
+    </aside>
+
+    <main class="main-content" :class="{ 'is-mobile': isMobile }">
+      <router-view />
     </main>
   </div>
+
+  <BottomTabBar v-if="isMobile" @open-menu="showDrawer = true" />
+  <HamburgerDrawer :show="isMobile && showDrawer" @close="showDrawer = false" />
 
   <Teleport to="body">
     <div v-if="showApiDialog" class="overlay" @click.self="showApiDialog = false">
@@ -188,97 +157,121 @@ const viewComponent = computed(() => {
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #1a1a2e;
-  background-image: url('/1.png');
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-attachment: fixed;
   color: #eee;
   min-height: 100vh;
 }
 
-.app-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 16px;
+.app-layout {
+  display: flex;
+  min-height: 100vh;
 }
 
-.app-header {
+.sidebar {
+  width: 200px;
+  min-width: 200px;
+  background: rgba(15, 15, 40, 0.95);
+  border-right: 1px solid rgba(255,255,255,0.06);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 0;
-  border-bottom: 1px solid #333;
+  flex-direction: column;
+  padding: 16px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar-header {
   margin-bottom: 24px;
 }
 
-.app-header h1 {
-  font-size: 1.5rem;
+.logo {
+  font-size: 1.4rem;
+  font-weight: 800;
   background: linear-gradient(135deg, #667eea, #764ba2);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  cursor: pointer;
+  text-align: center;
 }
 
-.app-header nav {
+.sidebar-nav {
+  flex: 1;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  display: flex;
   align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #aaa;
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: all 0.15s;
+}
+
+.nav-item:hover {
+  background: rgba(255,255,255,0.05);
+  color: #eee;
+}
+
+.nav-item.active {
+  background: rgba(102, 126, 234, 0.15);
+  color: #667eea;
+}
+
+.nav-icon {
+  font-size: 1.1rem;
+  width: 24px;
+  text-align: center;
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  flex-wrap: wrap;
 }
 
 .audio-controls {
   position: relative;
   display: flex;
-  align-items: center;
   gap: 2px;
 }
 
-.btn-audio {
-  background: transparent;
-  border: none;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 4px 8px;
-  line-height: 1;
-}
-.btn-audio:hover {
-  opacity: 0.8;
-}
-
-.btn-volume {
+.btn-icon {
   background: transparent;
   border: none;
   font-size: 1rem;
   cursor: pointer;
-  padding: 4px 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
   line-height: 1;
 }
-.btn-volume:hover {
-  opacity: 0.8;
+
+.btn-icon:hover {
+  background: rgba(255,255,255,0.1);
 }
 
 .volume-panel {
   position: absolute;
-  top: 100%;
-  right: 0;
+  bottom: 100%;
+  left: 0;
   background: #16213e;
   border: 1px solid #333;
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   z-index: 50;
-  min-width: 150px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  margin-top: 4px;
-}
-
-.volume-label {
-  display: block;
-  font-size: 0.75rem;
-  color: #aaa;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .volume-slider {
-  width: 100%;
+  width: 100px;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
@@ -287,63 +280,56 @@ body {
   outline: none;
   cursor: pointer;
 }
+
 .volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #667eea;
   cursor: pointer;
-}
-.volume-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #667eea;
-  cursor: pointer;
-  border: none;
 }
 
-.btn-api {
-  background: #0f3460;
-  border: 1px solid #667eea;
+.user-badge {
+  font-size: 0.8rem;
   color: #667eea;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.user-badge:hover {
+  background: rgba(102,126,234,0.1);
+}
+
+.btn-login {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border: none;
+  color: #fff;
   padding: 6px 14px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 0.8rem;
   font-weight: 600;
+  margin-left: auto;
 }
 
-.btn-api:hover {
-  background: #1a1a4e;
+.btn-login:hover {
+  opacity: 0.9;
 }
 
-.btn-back {
-  background: #333;
-  color: #eee;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
+.main-content {
+  flex: 1;
+  padding: 24px;
+  max-width: calc(100vw - 200px);
+  overflow-y: auto;
 }
 
-.btn-back:hover {
-  background: #444;
-}
-
-.app-main {
-  display: flex;
-  flex-direction: column;
-}
-
-/* 毛玻璃卡片通用样式 */
-.frosted {
-  background: rgba(22, 33, 62, 0.85) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+.main-content.is-mobile {
+  max-width: 100vw;
+  padding: 12px;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
 .overlay {
@@ -356,7 +342,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 200;
 }
 
 .dialog {
@@ -417,16 +403,9 @@ body {
 .btn-accept {
   background: #28a745;
 }
-
-.btn-accept:hover {
-  opacity: 0.9;
-}
-
+.btn-accept:hover { opacity: 0.9; }
 .btn-reject {
   background: #6c757d;
 }
-
-.btn-reject:hover {
-  opacity: 0.9;
-}
+.btn-reject:hover { opacity: 0.9; }
 </style>

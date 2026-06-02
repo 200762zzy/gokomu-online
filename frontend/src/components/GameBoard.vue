@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 
 const props = defineProps({
   board: Array,
@@ -8,42 +8,68 @@ const props = defineProps({
   readonly: Boolean,
   replayLabel: Object,
   lastMove: Object,
+  boardImage: String,
+  parentWidth: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['placeStone'])
 
 const BOARD_SIZE = 15
-const CELL_SIZE = 36
+
+const CELL_SIZE = computed(() => {
+  const availableWidth = props.parentWidth > 0 ? props.parentWidth : (window.innerWidth - 48)
+  const maxFit = Math.floor((availableWidth - MARGIN * 2) / (BOARD_SIZE - 1))
+  const desktopMax = 36
+  return Math.max(20, Math.min(desktopMax, maxFit))
+})
 const MARGIN = 24
-const canvasSize = CELL_SIZE * (BOARD_SIZE - 1) + MARGIN * 2
+const canvasSize = computed(() => CELL_SIZE.value * (BOARD_SIZE - 1) + MARGIN * 2)
 
 const canvasRef = ref(null)
+let boardImageCache = null
+
+function loadBoardImage(url) {
+  if (!url) { boardImageCache = null; return }
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => { boardImageCache = img; drawBoard() }
+  img.onerror = () => { boardImageCache = null; drawBoard() }
+  img.src = url
+}
 
 function drawBoard() {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   const dpr = window.devicePixelRatio || 1
-  canvas.width = canvasSize * dpr
-  canvas.height = canvasSize * dpr
+  canvas.width = canvasSize.value * dpr
+  canvas.height = canvasSize.value * dpr
   ctx.scale(dpr, dpr)
 
-  ctx.clearRect(0, 0, canvasSize, canvasSize)
+  const cs = canvasSize.value
+  ctx.clearRect(0, 0, cs, cs)
 
-  ctx.fillStyle = '#d4a853'
-  ctx.fillRect(0, 0, canvasSize, canvasSize)
+  if (boardImageCache) {
+    ctx.drawImage(boardImageCache, 0, 0, cs, cs)
+  } else {
+    ctx.fillStyle = '#d4a853'
+    ctx.fillRect(0, 0, cs, cs)
+  }
+
+  const cell = CELL_SIZE.value
+  const margin = MARGIN
 
   ctx.strokeStyle = '#8b6914'
   ctx.lineWidth = 1
   for (let i = 0; i < BOARD_SIZE; i++) {
-    const pos = MARGIN + i * CELL_SIZE
+    const pos = margin + i * cell
     ctx.beginPath()
-    ctx.moveTo(MARGIN, pos)
-    ctx.lineTo(MARGIN + (BOARD_SIZE - 1) * CELL_SIZE, pos)
+    ctx.moveTo(margin, pos)
+    ctx.lineTo(margin + (BOARD_SIZE - 1) * cell, pos)
     ctx.stroke()
     ctx.beginPath()
-    ctx.moveTo(pos, MARGIN)
-    ctx.lineTo(pos, MARGIN + (BOARD_SIZE - 1) * CELL_SIZE)
+    ctx.moveTo(pos, margin)
+    ctx.lineTo(pos, margin + (BOARD_SIZE - 1) * cell)
     ctx.stroke()
   }
 
@@ -51,7 +77,7 @@ function drawBoard() {
   ctx.fillStyle = '#8b6914'
   for (const [sr, sc] of stars) {
     ctx.beginPath()
-    ctx.arc(MARGIN + sc * CELL_SIZE, MARGIN + sr * CELL_SIZE, 4, 0, Math.PI * 2)
+    ctx.arc(margin + sc * cell, margin + sr * cell, Math.max(3, cell * 0.12), 0, Math.PI * 2)
     ctx.fill()
   }
 
@@ -60,9 +86,9 @@ function drawBoard() {
     for (let c = 0; c < BOARD_SIZE; c++) {
       const val = board[r]?.[c]
       if (val === 0 || val === undefined) continue
-      const x = MARGIN + c * CELL_SIZE
-      const y = MARGIN + r * CELL_SIZE
-      const radius = CELL_SIZE / 2 - 2
+      const x = margin + c * cell
+      const y = margin + r * cell
+      const radius = cell / 2 - 2
 
       ctx.beginPath()
       ctx.arc(x, y, radius, 0, Math.PI * 2)
@@ -86,25 +112,25 @@ function drawBoard() {
   }
 
   ctx.fillStyle = '#6b4f1a'
-  ctx.font = '10px sans-serif'
+  ctx.font = Math.max(9, cell * 0.3) + 'px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   for (let i = 0; i < BOARD_SIZE; i++) {
-    const pos = MARGIN + i * CELL_SIZE
-    ctx.fillText(String(i), MARGIN - 14, pos)
-    ctx.fillText(String(i), pos, MARGIN - 14)
+    const pos = margin + i * cell
+    ctx.fillText(String(i), margin - 14, pos)
+    ctx.fillText(String(i), pos, margin - 14)
   }
 
   if (props.lastMove) {
-    const lx = MARGIN + props.lastMove.col * CELL_SIZE
-    const ly = MARGIN + props.lastMove.row * CELL_SIZE
+    const lx = margin + props.lastMove.col * cell
+    const ly = margin + props.lastMove.row * cell
     ctx.save()
     ctx.strokeStyle = '#ff2d55'
-    ctx.lineWidth = 3
+    ctx.lineWidth = Math.max(2, cell * 0.08)
     ctx.shadowColor = '#ff2d55'
     ctx.shadowBlur = 8
     ctx.beginPath()
-    ctx.arc(lx, ly, CELL_SIZE / 2 + 1, 0, Math.PI * 2)
+    ctx.arc(lx, ly, cell / 2 + 1, 0, Math.PI * 2)
     ctx.stroke()
     ctx.restore()
   }
@@ -120,12 +146,12 @@ function drawBoard() {
     }
 
     if (lastRow !== -1) {
-      const x = MARGIN + lastCol * CELL_SIZE
-      const y = MARGIN + lastRow * CELL_SIZE - CELL_SIZE * 0.75
+      const x = margin + lastCol * cell
+      const y = margin + lastRow * cell - cell * 0.75
       const label = props.replayLabel
 
       ctx.save()
-      ctx.font = 'bold 13px sans-serif'
+      ctx.font = 'bold ' + Math.max(11, cell * 0.36) + 'px sans-serif'
       const text = label.text
       const metrics = ctx.measureText(text)
       const pad = 6
@@ -133,19 +159,19 @@ function drawBoard() {
       const bh = 22
       const bx = x - bw / 2
       const by = y - bh
-      const r = 4
+      const r2 = 4
 
       ctx.fillStyle = label.color || '#ffd700'
       ctx.beginPath()
-      ctx.moveTo(bx + r, by)
-      ctx.lineTo(bx + bw - r, by)
-      ctx.arcTo(bx + bw, by, bx + bw, by + r, r)
-      ctx.lineTo(bx + bw, by + bh - r)
-      ctx.arcTo(bx + bw, by + bh, bx + bw - r, by + bh, r)
-      ctx.lineTo(bx + r, by + bh)
-      ctx.arcTo(bx, by + bh, bx, by + bh - r, r)
-      ctx.lineTo(bx, by + r)
-      ctx.arcTo(bx, by, bx + r, by, r)
+      ctx.moveTo(bx + r2, by)
+      ctx.lineTo(bx + bw - r2, by)
+      ctx.arcTo(bx + bw, by, bx + bw, by + r2, r2)
+      ctx.lineTo(bx + bw, by + bh - r2)
+      ctx.arcTo(bx + bw, by + bh, bx + bw - r2, by + bh, r2)
+      ctx.lineTo(bx + r2, by + bh)
+      ctx.arcTo(bx, by + bh, bx, by + bh - r2, r2)
+      ctx.lineTo(bx, by + r2)
+      ctx.arcTo(bx, by, bx + r2, by, r2)
       ctx.closePath()
       ctx.fill()
 
@@ -159,34 +185,60 @@ function drawBoard() {
   }
 }
 
-function handleClick(event) {
-  if (props.gameOver || props.readonly) return
-
+function getBoardPos(clientX, clientY) {
   const canvas = canvasRef.value
   const rect = canvas.getBoundingClientRect()
-  const x = event.clientX - rect.left
-  const y = event.clientY - rect.top
-
-  const col = Math.round((x - MARGIN) / CELL_SIZE)
-  const row = Math.round((y - MARGIN) / CELL_SIZE)
-
-  if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return
-
-  emit('placeStone', { row, col })
+  const scaleX = canvasSize.value / rect.width
+  const scaleY = canvasSize.value / rect.height
+  const x = (clientX - rect.left) * scaleX
+  const y = (clientY - rect.top) * scaleY
+  const col = Math.round((x - MARGIN) / CELL_SIZE.value)
+  const row = Math.round((y - MARGIN) / CELL_SIZE.value)
+  if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null
+  return { row, col }
 }
 
-onMounted(drawBoard)
+function handleClick(event) {
+  if (props.gameOver || props.readonly) return
+  const pos = getBoardPos(event.clientX, event.clientY)
+  if (pos) emit('placeStone', pos)
+}
+
+function handleTouch(event) {
+  if (props.gameOver || props.readonly) return
+  event.preventDefault()
+  const touch = event.touches[0]
+  if (!touch) return
+  const pos = getBoardPos(touch.clientX, touch.clientY)
+  if (pos) emit('placeStone', pos)
+}
+
+onMounted(() => {
+  loadBoardImage(props.boardImage)
+  drawBoard()
+})
 watch(() => props.board, drawBoard, { deep: true })
 watch(() => props.replayLabel, drawBoard, { deep: true })
+watch(() => props.boardImage, (url) => { loadBoardImage(url); drawBoard() })
+watch(canvasSize, drawBoard)
 </script>
 
 <template>
   <div class="board-wrapper">
-    <canvas
-      ref="canvasRef"
-      :style="{ width: canvasSize + 'px', height: canvasSize + 'px', cursor: (gameOver || readonly) ? 'default' : 'pointer' }"
-      @click="handleClick"
-    ></canvas>
+    <div class="board-container">
+      <canvas
+        ref="canvasRef"
+        :style="{
+          width: canvasSize + 'px',
+          height: canvasSize + 'px',
+          cursor: (gameOver || readonly) ? 'default' : 'pointer',
+          maxWidth: '100%',
+          maxHeight: '100%',
+        }"
+        @click="handleClick"
+        @touchstart="handleTouch"
+      ></canvas>
+    </div>
   </div>
 </template>
 
@@ -194,10 +246,17 @@ watch(() => props.replayLabel, drawBoard, { deep: true })
 .board-wrapper {
   display: flex;
   justify-content: center;
+  width: 100%;
+}
+
+.board-container {
+  max-width: 100%;
+  overflow: hidden;
 }
 
 canvas {
   border-radius: 4px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  touch-action: none;
 }
 </style>

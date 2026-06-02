@@ -33,5 +33,15 @@ backend/static/
 # Packed distribution env (never ship local API key)
 dist/GomokuOnline/.env
 
+# Local SQLite database (prod uses PostgreSQL)
+backend/gomoku.db
+*.db-journal
+*.db-wal
+
+# Build artifacts at project root
+GomokuOnline.exe
+GomokuOnline.old
+/dist/
+
 # opencode
 .opencode/

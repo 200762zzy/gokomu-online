@@ -1,4 +1,4 @@
-const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+let instance = null
 
 class WsClient {
   constructor() {
@@ -7,28 +7,53 @@ class WsClient {
     this.reconnectTimer = null
     this._intentionalClose = false
     this.playerName = null
+    this.token = null
+    this._authenticated = false
+    this._reconnectAttempts = 0
+    this._reconnectDelay = 3000
+    this._lastConnectTime = 0
   }
 
-  connect(playerName) {
+  connect(playerName, token) {
     this.playerName = playerName
+    this.token = token
     this._intentionalClose = false
+    this._authenticated = false
+    this._reconnectAttempts = 0
+    this._reconnectDelay = 3000
+    this._lastConnectTime = 0
     this._createConnection()
   }
 
   _createConnection() {
     this._cleanup()
 
-    this.ws = new WebSocket(WS_BASE)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsUrl = `${protocol}//${window.location.host}/ws`
+    this.ws = new WebSocket(wsUrl)
 
     this.ws.onopen = () => {
-      this._emit('open', {})
+      this._reconnectAttempts = 0
+      this._reconnectDelay = 3000
+      this._lastConnectTime = Date.now()
+      if (this.token) {
+        this.send({ type: 'auth', token: this.token })
+      } else {
+        this._authenticated = true
+        this._emit('open', {})
+      }
     }
 
     this.ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data)
+        if (msg.type === 'auth_ok') {
+          this._authenticated = true
+          this._emit('open', {})
+          this._emit('auth_ok', msg)
+        }
         this._emit(msg.type, msg)
-      } catch {}
+      } catch { /* ignore */ }
     }
 
     this.ws.onclose = () => {
@@ -56,10 +81,18 @@ class WsClient {
 
   _scheduleReconnect() {
     if (this.reconnectTimer) return
+    this._reconnectAttempts++
+    const maxAttempts = this._authenticated ? 8 : 3
+    if (this._reconnectAttempts > maxAttempts) {
+      this._emit('reconnect_limit', {})
+      return
+    }
+    const delay = this._reconnectDelay
+    this._reconnectDelay = Math.min(this._reconnectDelay * 1.5, 30000)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this._createConnection()
-    }, 3000)
+    }, delay)
   }
 
   send(data) {
@@ -96,12 +129,22 @@ class WsClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    this.listeners = {}
     this._cleanup()
+  }
+
+  isConnected() {
+    return this.ws && this.ws.readyState === WebSocket.OPEN
+  }
+
+  isAuthenticated() {
+    return this._authenticated
+  }
+
+  clearListeners() {
+    this.listeners = {}
   }
 }
 
-let instance = null
 export function getWsClient() {
   if (!instance) {
     instance = new WsClient()

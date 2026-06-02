@@ -8,6 +8,10 @@ import { createBoard, placeStone, checkWin, isValidMove, checkForbiddenMove, cou
 import { requestAnalysis, requestReview } from '../services/apiClient.js'
 import { getAIMove } from '../services/aiPlayer.js'
 import { audioManager } from '../services/audioManager.js'
+import { useIsMobile } from '../composables/useIsMobile.js'
+
+const { isMobile } = useIsMobile()
+const mobileBoardWidth = computed(() => Math.min(window.innerWidth - 16, 560))
 
 const props = defineProps({
   difficulty: String,
@@ -243,58 +247,122 @@ onMounted(() => {
 
 <template>
   <div v-if="forbiddenMessage" class="forbidden-toast">{{ forbiddenMessage }}</div>
-  <div class="ai-header">
-    <span class="ai-badge">人机对战 · {{ difficultyLabel }}</span>
-    <span class="ai-color">你执{{ playerLabel }}</span>
-  </div>
-  <div class="game-layout">
-    <div class="left-column">
-      <GameBoard
-        :board="board"
-        :current-turn="getStoneName(currentTurn)"
-        :game-over="gameOver"
-        :readonly="aiThinking || currentTurn !== player || gameOver"
-        :last-move="lastMove"
-        @place-stone="handlePlaceStone"
-      />
-      <div v-if="aiThinking" class="thinking-indicator">
-        <span class="thinking-dot"></span>
-        AI 思考中...
+
+  <!-- DESKTOP -->
+  <template v-if="!isMobile">
+    <div class="ai-header">
+      <span class="ai-badge">人机对战 · {{ difficultyLabel }}</span>
+      <span class="ai-color">你执{{ playerLabel }}</span>
+    </div>
+    <div class="game-layout">
+      <div class="left-column">
+        <GameBoard
+          :board="board"
+          :current-turn="getStoneName(currentTurn)"
+          :game-over="gameOver"
+          :readonly="aiThinking || currentTurn !== player || gameOver"
+          :last-move="lastMove"
+          @place-stone="handlePlaceStone"
+        />
+        <div v-if="aiThinking" class="thinking-indicator">
+          <span class="thinking-dot"></span>
+          AI 思考中...
+        </div>
+      </div>
+      <div class="right-column">
+        <GameInfo
+          :current-turn="getStoneName(currentTurn)"
+          :game-over="gameOver"
+          :winner="winner"
+          :game-result="gameResult"
+          :black-move-count="blackMoveCount"
+          :white-move-count="whiteMoveCount"
+        />
+        <WinRatePanel
+          :analysis="analysis"
+          :loading="analyzing"
+        />
+        <button
+          class="btn-action btn-analysis"
+          :disabled="analyzing || gameOver"
+          @click="handleRequestAnalysis"
+        >
+          {{ analyzing ? '分析中（约10-30秒）' : '刷新分析' }}
+        </button>
+        <div v-if="!gameOver" class="action-row">
+          <button
+            class="btn-action btn-resign"
+            @click="handleResign"
+          >认输</button>
+        </div>
+        <button
+          v-if="gameOver"
+          class="btn-action btn-restart"
+          @click="resetGame"
+        >再来一局</button>
       </div>
     </div>
-    <div class="right-column">
-      <GameInfo
-        :current-turn="getStoneName(currentTurn)"
-        :game-over="gameOver"
-        :winner="winner"
-        :game-result="gameResult"
-        :black-move-count="blackMoveCount"
-        :white-move-count="whiteMoveCount"
-      />
-      <WinRatePanel
-        :analysis="analysis"
-        :loading="analyzing"
-      />
-      <button
-        class="btn-action btn-analysis"
-        :disabled="analyzing || gameOver"
-        @click="handleRequestAnalysis"
-      >
-        {{ analyzing ? '分析中（约10-30秒）' : '刷新分析' }}
-      </button>
-      <div v-if="!gameOver" class="action-row">
+  </template>
+
+  <!-- MOBILE -->
+  <template v-else>
+    <div class="mobile-ai-layout">
+      <div class="mobile-ai-header">
+        <span class="ai-badge">人机 · {{ difficultyLabel }}</span>
+        <span class="ai-color">你执{{ playerLabel }}</span>
+        <div v-if="aiThinking" class="thinking-indicator-sm">
+          <span class="thinking-dot"></span>
+          AI思考中...
+        </div>
+      </div>
+
+      <div class="mobile-ai-board">
+        <GameBoard
+          :board="board"
+          :current-turn="getStoneName(currentTurn)"
+          :game-over="gameOver"
+          :readonly="aiThinking || currentTurn !== player || gameOver"
+          :last-move="lastMove"
+          :parent-width="mobileBoardWidth"
+          @place-stone="handlePlaceStone"
+        />
+      </div>
+
+      <div v-if="!gameOver" class="mobile-ai-actions">
         <button
           class="btn-action btn-resign"
           @click="handleResign"
         >认输</button>
+        <button
+          class="btn-action btn-analysis"
+          :disabled="analyzing || gameOver"
+          @click="handleRequestAnalysis"
+        >
+          {{ analyzing ? 'AI分析中...' : 'AI分析' }}
+        </button>
       </div>
-      <button
-        v-if="gameOver"
-        class="btn-action btn-restart"
-        @click="resetGame"
-      >再来一局</button>
+
+      <div class="mobile-ai-info">
+        <GameInfo
+          :current-turn="getStoneName(currentTurn)"
+          :game-over="gameOver"
+          :winner="winner"
+          :game-result="gameResult"
+          :black-move-count="blackMoveCount"
+          :white-move-count="whiteMoveCount"
+        />
+        <WinRatePanel
+          :analysis="analysis"
+          :loading="analyzing"
+        />
+        <button
+          v-if="gameOver"
+          class="btn-action btn-restart"
+          @click="resetGame"
+        >再来一局</button>
+      </div>
     </div>
-  </div>
+  </template>
 </template>
 
 <style scoped>
@@ -406,9 +474,75 @@ onMounted(() => {
   100% { opacity: 0; }
 }
 
-@media (max-width: 820px) {
-  .game-layout {
-    grid-template-columns: 1fr;
-  }
+/* Mobile layout */
+.mobile-ai-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
+
+.mobile-ai-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(22, 33, 62, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  flex-wrap: wrap;
+}
+
+.thinking-indicator-sm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #4ecdc4;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.thinking-indicator-sm .thinking-dot {
+  width: 8px;
+  height: 8px;
+  background: #4ecdc4;
+  border-radius: 50%;
+  animation: pulse 0.6s ease-in-out infinite alternate;
+}
+
+.mobile-ai-board {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.mobile-ai-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  justify-content: center;
+}
+
+.mobile-ai-actions .btn-action {
+  flex: 0 1 auto;
+  min-width: 100px;
+  min-height: 44px;
+  padding: 10px 20px;
+}
+
+.mobile-ai-info {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobile-ai-info .btn-action {
+  min-height: 44px;
+}
+
 </style>

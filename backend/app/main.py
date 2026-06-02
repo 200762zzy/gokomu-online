@@ -1,27 +1,73 @@
 import logging
+import os
+import time
+from collections import defaultdict
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from .config import settings
+from .database import init_db
 from .models import AnalyzeRequest, EvaluateRequest, AiMoveRequest, AiMoveResponse
 from .ai_analysis import request_analysis, request_review, request_ai_move
-from .room_manager import room_manager
-from .ws_handler import handle_websocket
+from .routers import auth_router, users_router, games_router, friends_router, admin_router
+from .ws.handler import handle_websocket
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Gomoku Online API", version="1.0.0")
+from .log_handler import log_buffer
+logging.getLogger().addHandler(log_buffer)
+
+_ws_recent_connects: dict[str, list[float]] = defaultdict(list)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    logger.info("Database initialized")
+    yield
+
+
+app = FastAPI(title="Gomoku Online API", version="2.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.FRONTEND_URL, "*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(games_router)
+app.include_router(friends_router)
+app.include_router(admin_router)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    await handle_websocket(ws, room_manager)
+    client_ip = ws.client.host
+    now = time.time()
+    _ws_recent_connects[client_ip] = [t for t in _ws_recent_connects[client_ip] if now - t < 30]
+    if len(_ws_recent_connects[client_ip]) >= 5:
+        await ws.close(code=1008, reason="连接过于频繁")
+        return
+    _ws_recent_connects[client_ip].append(now)
+    await handle_websocket(ws)
 
 
 @app.get("/api/rooms")
 async def list_rooms():
+    from .room_manager import room_manager
     return room_manager.list_open_rooms()
+
+@app.get("/api/rooms/active")
+async def list_active_rooms():
+    from .room_manager import room_manager
+    return room_manager.list_spectatable_rooms()
 
 
 @app.post("/api/analyze")
@@ -44,6 +90,32 @@ async def ai_move(req: AiMoveRequest):
     return AiMoveResponse(row=-1, col=-1)
 
 
+@app.get("/api/ngrok-url")
+async def ngrok_url():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    url_file = os.path.join(root, ".ngrok_url")
+    if os.path.exists(url_file):
+        with open(url_file) as f:
+            url = f.read().strip()
+            return {"url": url}
+    return {"url": None}
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+# Serve frontend static files (production mode)
+frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "frontend", "dist")
+if os.path.exists(frontend_dist):
+    # Assets subdirectories first (longer prefix wins)
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
+    app.mount("/audio", StaticFiles(directory=os.path.join(frontend_dist, "audio")), name="audio")
+    app.mount("/bg", StaticFiles(directory=os.path.join(frontend_dist, "bg")), name="bg")
+    # Root: serve exact files, fallback to index.html for SPA routes
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+    logger.info(f"Serving frontend from {frontend_dist}")
+else:
+    logger.warning(f"Frontend dist not found at {frontend_dist}, run 'npm run build' in frontend/")
+
+

@@ -1,8 +1,11 @@
 ﻿<script setup>
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth.js'
 import { audioManager } from '../services/audioManager.js'
 
-const emit = defineEmits(['startGame', 'startOnline', 'startAi', 'viewReplay'])
+const router = useRouter()
+const authStore = useAuthStore()
 
 const savedGames = ref([])
 const showAiDialog = ref(false)
@@ -44,7 +47,6 @@ async function copyAddress() {
   try {
     await navigator.clipboard.writeText(networkUrl.value)
   } catch {
-    // fallback for non-https context
     const ta = document.createElement('textarea')
     ta.value = networkUrl.value
     document.body.appendChild(ta)
@@ -52,6 +54,16 @@ async function copyAddress() {
     document.execCommand('copy')
     document.body.removeChild(ta)
   }
+}
+
+function startAi() {
+  const params = new URLSearchParams({ difficulty: aiDifficulty.value, playerColor: aiColor.value })
+  router.push(`/ai-game?${params}`)
+}
+
+function viewReplay(game) {
+  const data = JSON.stringify(game)
+  router.push(`/local-game?replay=${encodeURIComponent(data)}`)
 }
 
 onMounted(loadHistory)
@@ -65,17 +77,17 @@ onMounted(loadHistory)
       <span class="network-copy">复制</span>
     </div>
 
-    <div class="card game-card" @click="audioManager.playClick(); emit('startGame')">
+    <div class="card game-card" @click="audioManager.playClick(); router.push('/local-game')">
       <h2>本地对战</h2>
       <p class="subtitle">双人同屏</p>
-      <button class="btn-primary" @click.stop="audioManager.playClick(); emit('startGame')">
+      <button class="btn-primary" @click.stop="audioManager.playClick(); router.push('/local-game')">
         开始游戏
       </button>
     </div>
-    <div class="card online-card" @click="audioManager.playClick(); emit('startOnline')">
+    <div class="card online-card" @click="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/lobby' : '/login?redirect=/lobby')">
       <h2>在线对战</h2>
       <p class="subtitle">联网匹配</p>
-      <button class="btn-online" @click.stop="audioManager.playClick(); emit('startOnline')">
+      <button class="btn-online" @click.stop="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/lobby' : '/login?redirect=/lobby')">
         创建 / 加入
       </button>
     </div>
@@ -145,10 +157,7 @@ onMounted(loadHistory)
           </div>
           <div class="dialog-footer">
             <button class="btn-cancel" @click="showAiDialog = false">取消</button>
-            <button
-              class="btn-start"
-              @click="audioManager.playClick(); showAiDialog = false; emit('startAi', { difficulty: aiDifficulty, playerColor: aiColor })"
-            >开始</button>
+            <button class="btn-start" @click="audioManager.playClick(); showAiDialog = false; startAi()">开始</button>
           </div>
         </div>
       </div>
@@ -163,7 +172,7 @@ onMounted(loadHistory)
         v-for="game in savedGames"
         :key="game.id"
         class="history-item"
-        @click="emit('viewReplay', game)"
+        @click="viewReplay(game)"
       >
         <span class="history-result">{{ formatResult(game) }}</span>
         <span class="history-moves">
@@ -181,6 +190,13 @@ onMounted(loadHistory)
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .home-container {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
 }
 
 .network-card {
@@ -411,7 +427,7 @@ onMounted(loadHistory)
 }
 
 .rules-card li::before {
-  content: '•';
+  content: '\2022';
   position: absolute;
   left: 0;
   color: #667eea;
@@ -525,12 +541,4 @@ onMounted(loadHistory)
   font-family: monospace;
 }
 
-@media (max-width: 768px) {
-  .home-container {
-    grid-template-columns: 1fr;
-  }
-  .history-card {
-    grid-column: 1;
-  }
-}
 </style>

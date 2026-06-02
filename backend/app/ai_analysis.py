@@ -4,11 +4,11 @@ import logging
 import httpx
 from typing import Optional
 
-from .game import board_to_api_payload, BOARD_SIZE, BLACK, WHITE, count_forced_wins
+from .game import board_to_api_payload, BOARD_SIZE, BLACK, WHITE, EMPTY, count_forced_wins
 
 logger = logging.getLogger(__name__)
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-TIMEOUT = 60.0
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+TIMEOUT_CONFIG = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
 
 
 def _build_prompt(board: list[list[int]]) -> str:
@@ -39,14 +39,66 @@ def _build_prompt(board: list[list[int]]) -> str:
     return prompt
 
 
+def _local_analysis(board: list[list[int]]) -> dict:
+    """Heuristic local analysis as fallback when API is unavailable."""
+    black_count = sum(1 for row in board for cell in row if cell == BLACK)
+    white_count = sum(1 for row in board for cell in row if cell == WHITE)
+    total = black_count + white_count
+    if total == 0:
+        return {"black_win_rate": 0.5, "white_win_rate": 0.5, "source": "local"}
+
+    def score_player(player):
+        s = 0
+        visited = set()
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                if board[r][c] != player:
+                    continue
+                for dr, dc in [(0,1),(1,0),(1,1),(1,-1)]:
+                    pr, pc = r - dr, c - dc
+                    if 0 <= pr < BOARD_SIZE and 0 <= pc < BOARD_SIZE and board[pr][pc] == player:
+                        continue
+                    consecutive = 1
+                    open_ends = 0
+                    nr, nc = r + dr, c + dc
+                    while 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE and board[nr][nc] == player:
+                        consecutive += 1
+                        nr += dr
+                        nc += dc
+                    if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE and board[nr][nc] == EMPTY:
+                        open_ends += 1
+                    pr2, pc2 = r - dr, c - dc
+                    if 0 <= pr2 < BOARD_SIZE and 0 <= pc2 < BOARD_SIZE and board[pr2][pc2] == EMPTY:
+                        open_ends += 1
+                    if consecutive >= 5:
+                        s += 100000
+                    elif consecutive == 4 and open_ends == 2:
+                        s += 10000
+                    elif consecutive == 4 and open_ends == 1:
+                        s += 5000
+                    elif consecutive == 3 and open_ends == 2:
+                        s += 1000
+                    elif consecutive == 3 and open_ends == 1:
+                        s += 200
+                    elif consecutive == 2 and open_ends == 2:
+                        s += 50
+                    elif consecutive == 2 and open_ends == 1:
+                        s += 10
+        return s
+
+    black_score = score_player(BLACK)
+    white_score = score_player(WHITE)
+    diff = black_score - white_score
+    bwr = 1 / (1 + pow(2.71828, -diff / 2000))
+    bwr = max(0.05, min(0.95, bwr))
+    wwr = 1 - bwr
+    return {"black_win_rate": round(bwr, 4), "white_win_rate": round(wwr, 4), "source": "local"}
+
+
 async def request_analysis(board: list[list[int]], api_key: str = "") -> Optional[dict]:
     api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
     if not api_key:
-        logger.warning("DEEPSEEK_API_KEY not set, skipping AI analysis")
-        return {
-            "black_win_rate": 0.5,
-            "white_win_rate": 0.5,
-        }
+        return _local_analysis(board)
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -62,7 +114,7 @@ async def request_analysis(board: list[list[int]], api_key: str = "") -> Optiona
     }
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_CONFIG) as client:
             resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
@@ -73,18 +125,18 @@ async def request_analysis(board: list[list[int]], api_key: str = "") -> Optiona
                 content = content.rsplit("```", 1)[0] if "```" in content else content
             result = json.loads(content)
             result = _validate_result(result)
+            result["source"] = "deepseek"
             return _apply_forced_win(board, result)
     except httpx.TimeoutException:
         logger.error("DeepSeek API timeout")
     except httpx.HTTPStatusError as e:
-        logger.error(f"DeepSeek API HTTP error: {e.response.status_code}")
+        logger.error(f"DeepSeek API HTTP error: {e.response.status_code} - {e.response.text[:500]}")
+    except httpx.RequestError as e:
+        logger.error(f"DeepSeek API connection error: {e}")
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         logger.error(f"DeepSeek response parse error: {e}")
 
-    result = {"black_win_rate": 0.5, "white_win_rate": 0.5}
-    if api_key:
-        result = _apply_forced_win(board, result)
-    return result
+    return _local_analysis(board)
 
 
 def _validate_result(result: dict) -> dict:
@@ -106,14 +158,15 @@ def _validate_result(result: dict) -> dict:
 def _apply_forced_win(board: list[list[int]], result: dict) -> dict:
     bwr = result.get("black_win_rate", 0.5)
     wwr = result.get("white_win_rate", 0.5)
+    src = result.get("source", "deepseek")
 
     black_wins = count_forced_wins(board, BLACK)
     white_wins = count_forced_wins(board, WHITE)
 
     if black_wins >= 2:
-        return {"black_win_rate": 1.0, "white_win_rate": 0.0}
+        return {"black_win_rate": 1.0, "white_win_rate": 0.0, "source": src}
     if white_wins >= 2:
-        return {"black_win_rate": 0.0, "white_win_rate": 1.0}
+        return {"black_win_rate": 0.0, "white_win_rate": 1.0, "source": src}
 
     return result
 
@@ -161,7 +214,7 @@ async def request_ai_move(board: list[list[int]], player: int, api_key: str = ""
     }
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_CONFIG) as client:
             resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
@@ -242,7 +295,7 @@ async def request_review(moves: list[dict], result: str) -> Optional[list[dict]]
     }
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_CONFIG) as client:
             resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()

@@ -1,7 +1,9 @@
 import random
+import asyncio
 import logging
 from fastapi import WebSocket
 from . import game
+from .services.title_service import get_title
 
 logger = logging.getLogger(__name__)
 
@@ -10,10 +12,14 @@ class PlayerConnection:
     def __init__(self, ws: WebSocket, name: str):
         self.ws = ws
         self.name = name
+        self.user_id: int | None = None
+        self.disconnected: bool = False
+        self.reconnect_task: asyncio.Task | None = None
 
 
 class Room:
-    def __init__(self, room_id: str, black: PlayerConnection):
+    def __init__(self, room_id: str, black: PlayerConnection, password: str = "",
+                 initial_time_ms: int = 1800000, increment_ms: int = 30000):
         self.id = room_id
         self.players: dict[str, PlayerConnection | None] = {"black": black, "white": None}
         self.board = game.create_board()
@@ -26,6 +32,17 @@ class Room:
         self.undo_request_by: str | None = None
         self.black_name = black.name
         self.white_name: str | None = None
+        self.black_user_id: int | None = None
+        self.white_user_id: int | None = None
+        self.black_elo: int = 1000
+        self.white_elo: int | None = None
+        self.spectators: list[PlayerConnection] = []
+        self.password = password
+        self.black_time_remaining: int = initial_time_ms
+        self.white_time_remaining: int = initial_time_ms
+        self.increment: int = increment_ms
+        self.timer_task: asyncio.Task | None = None
+        self.timer_active: bool = False
 
     @property
     def is_full(self) -> bool:
@@ -48,6 +65,13 @@ class Room:
             "room_id": self.id,
             "black_name": self.black_name,
             "white_name": self.white_name,
+            "spectator_count": len(self.spectators),
+            "game_over": self.game_over,
+            "move_count": len(self.move_history),
+            "has_password": bool(self.password),
+            "increment_ms": self.increment,
+            "black_title": get_title(self.black_elo).model_dump(),
+            "white_title": get_title(self.white_elo or 1000).model_dump(),
         }
 
 
@@ -62,20 +86,26 @@ class RoomManager:
                 return rid
         raise RuntimeError("No available room IDs")
 
-    async def create_room(self, ws: WebSocket, player_name: str) -> tuple[str, str]:
+    async def create_room(self, ws: WebSocket, player_name: str,
+                          password: str = "",
+                          initial_time_ms: int = 1800000,
+                          increment_ms: int = 30000) -> tuple[str, str]:
         room_id = self._generate_id()
         player = PlayerConnection(ws, player_name)
-        room = Room(room_id, player)
+        room = Room(room_id, player, password, initial_time_ms, increment_ms)
         self.rooms[room_id] = room
-        logger.info(f"Room {room_id} created by {player_name}")
+        logger.info(f"Room {room_id} created by {player_name} {'(password)' if password else ''}")
         return room_id, "black"
 
-    async def join_room(self, room_id: str, ws: WebSocket, player_name: str) -> str | None:
+    async def join_room(self, room_id: str, ws: WebSocket, player_name: str,
+                        password: str = "") -> str | None:
         room = self.rooms.get(room_id)
         if room is None:
             return None
         if room.is_full:
             return None
+        if room.password and room.password != password:
+            return "password_required"
         room.players["white"] = PlayerConnection(ws, player_name)
         room.white_name = player_name
         logger.info(f"{player_name} joined room {room_id}")
@@ -93,6 +123,16 @@ class RoomManager:
         for room in self.rooms.values():
             if not room.is_full and not room.game_over:
                 result.append(room.to_dict())
+        return result
+
+    def list_spectatable_rooms(self) -> list[dict]:
+        result = []
+        for room in self.rooms.values():
+            if room.is_full and not room.game_over:
+                d = room.to_dict()
+                d["black_user_id"] = room.black_user_id
+                d["white_user_id"] = room.white_user_id
+                result.append(d)
         return result
 
     async def handle_place_stone(self, room: Room, color: str, row: int, col: int) -> dict:
@@ -193,5 +233,58 @@ class RoomManager:
             room.draw_offer_by = None
             return {"ok": True, "accept": False}
 
+
+    def find_room_by_user_id(self, user_id: int) -> tuple[Room | None, str | None]:
+        for room in self.rooms.values():
+            for color, player in room.players.items():
+                if player and player.user_id == user_id:
+                    return room, color
+        return None, None
+
+    def reconnect_player(self, room: Room, color: str, ws: WebSocket) -> bool:
+        player = room.players.get(color)
+        if not player or not player.disconnected:
+            return False
+        player.ws = ws
+        player.disconnected = False
+        if player.reconnect_task:
+            player.reconnect_task.cancel()
+            player.reconnect_task = None
+        return True
+
+    def kick_user_from_rooms(self, user_id: int, reason: str):
+        for room in list(self.rooms.values()):
+            for color, player in list(room.players.items()):
+                if player and player.user_id == user_id:
+                    if player.ws:
+                        asyncio.ensure_future(player.ws.send_json({
+                            "type": "kicked",
+                            "reason": reason,
+                        }))
+                        asyncio.ensure_future(player.ws.close())
+                    room.players[color] = None
+            room.spectators[:] = [s for s in room.spectators if s.user_id != user_id]
+
+    def list_all_rooms(self) -> list:
+        return list(self.rooms.values())
+
+    def close_room(self, room_id: str, reason: str):
+        room = self.rooms.pop(room_id, None)
+        if not room:
+            return
+        for player in room.players.values():
+            if player and player.ws:
+                asyncio.ensure_future(player.ws.send_json({
+                    "type": "room_closed",
+                    "reason": reason,
+                }))
+                asyncio.ensure_future(player.ws.close())
+        for spec in room.spectators:
+            if spec.ws:
+                asyncio.ensure_future(spec.ws.send_json({
+                    "type": "room_closed",
+                    "reason": reason,
+                }))
+                asyncio.ensure_future(spec.ws.close())
 
 room_manager = RoomManager()

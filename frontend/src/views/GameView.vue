@@ -1,346 +1,444 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import GameBoard from '../components/GameBoard.vue'
 import GameInfo from '../components/GameInfo.vue'
 import WinRatePanel from '../components/WinRatePanel.vue'
-import ReplayMoveList from '../components/ReplayMoveList.vue'
-import { createBoard, placeStone, checkWin, isValidMove, checkForbiddenMove, countForcedWins, BLACK, WHITE, getStoneName } from '../services/gameLogic.js'
-import { requestAnalysis, requestReview } from '../services/apiClient.js'
+import TitleBadge from '../components/TitleBadge.vue'
+import { createBoard, BLACK, WHITE, getStoneName } from '../services/gameLogic.js'
+import { getWsClient } from '../services/wsClient.js'
+import { useAuthStore } from '../stores/auth.js'
+import { useGameStore } from '../stores/game.js'
+import { requestReview } from '../services/apiClient.js'
 import { audioManager } from '../services/audioManager.js'
+import ReplayMoveList from '../components/ReplayMoveList.vue'
+import TimerDisplay from '../components/TimerDisplay.vue'
+import ChatBox from '../components/ChatBox.vue'
+import { useChatStore } from '../stores/chat.js'
+import { useIsMobile } from '../composables/useIsMobile.js'
+import GameDrawer from '../components/GameDrawer.vue'
+const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
+const gameStore = useGameStore()
+const wsClient = getWsClient()
+const { isMobile } = useIsMobile()
+const mobileBoardWidth = computed(() => Math.min(window.innerWidth - 16, 560))
+const customBackground = computed(() => authStore.backgroundImage ? `url(${authStore.backgroundImage})` : '')
 
-function getMoveLabel(move, prevAnalysis) {
-  if (!move.analysis || !prevAnalysis) {
-    return { text: '开局', color: '#aaa', desc: '', delta: null }
-  }
-  let delta
-  let playerRate
-  if (move.player === BLACK) {
-    delta = move.analysis.black_win_rate - prevAnalysis.black_win_rate
-    playerRate = move.analysis.black_win_rate
-  } else {
-    delta = move.analysis.white_win_rate - prevAnalysis.white_win_rate
-    playerRate = move.analysis.white_win_rate
-  }
-  if (playerRate >= 0.95) return { text: '绝杀手', color: '#ff2d55', desc: '必胜之着', delta }
-  if (playerRate >= 0.85) return { text: '决胜手', color: '#ff6b6b', desc: '胜势确立', delta }
-  if (delta >= 0.20)      return { text: '妙手', color: '#ffd700', desc: '精妙着法', delta }
-  if (delta >= 0.08)      return { text: '好手', color: '#4ecdc4', desc: '取得优势', delta }
-  if (delta >= -0.08)     return { text: '正常', color: '#aaa', desc: '平稳进行', delta }
-  if (delta >= -0.20)     return { text: '疑问手', color: '#e6a817', desc: '略有亏损', delta }
-  return { text: '昏招', color: '#dc3545', desc: '严重失误', delta }
-}
-
-const props = defineProps({
-  replayGameData: Object,
-})
-
-const emit = defineEmits(['backHome'])
+const roomId = route.params.roomId || gameStore.currentRoomId
+const playerColor = ref(gameStore.playerColor)
+const playerName = ref(authStore.nickname || authStore.username)
 
 const board = ref(createBoard())
-const currentTurn = ref(BLACK)
+const currentTurn = ref('black')
+const myTurn = ref(gameStore.myTurn || false)
 const gameOver = ref(false)
 const winner = ref('')
 const gameResult = ref('')
 const moveCount = ref(0)
-const moveHistory = ref([])
 const blackMoveCount = ref(0)
 const whiteMoveCount = ref(0)
+const moveHistory = ref([])
+const opponentName = ref(gameStore.opponentName || '等待对手加入...')
+const opponentTitle = ref(gameStore.opponentTitle || null)
+const showOpponentEntry = ref(!!gameStore.opponentTitle)
 const analysis = ref(null)
 const analyzing = ref(false)
 const drawOfferBy = ref('')
+const undoOfferBy = ref('')
+const errorMsg = ref('')
+const waiting = computed(() => !gameStore.opponentName)
+const lastMove = ref(null)
+const moveAnalysisHistory = ref([])
 const reviews = ref([])
 const reviewsLoading = ref(false)
-const forbiddenMessage = ref('')
-
 const replayMode = ref(false)
 const replayStep = ref(-1)
-const replayMoves = ref([])
 
-const lastMove = computed(() => {
-  if (replayMode.value) {
-    if (replayStep.value < 0) return null
-    const m = replayMoves.value[replayStep.value]
-    return m ? { row: m.row, col: m.col } : null
+const blackTime = ref(1800000)
+const whiteTime = ref(1800000)
+const chatStore = useChatStore()
+
+const myColorLabel = computed(() => playerColor.value === 'black' ? '黑方' : '白方')
+
+const currentMoveLabel = computed(() => {
+  const len = moveAnalysisHistory.value.length
+  if (len === 0) return null
+  const cur = moveAnalysisHistory.value[len - 1]
+  if (!cur) return null
+  const prev = len >= 2 ? moveAnalysisHistory.value[len - 2] : null
+  if (!prev) return { text: '开局', color: '#aaa', desc: '', delta: null }
+  const last = moveHistory.value[len - 1]
+  if (!last) return null
+  let delta, playerRate
+  if (last.player === BLACK) {
+    delta = cur.black_win_rate - prev.black_win_rate
+    playerRate = cur.black_win_rate
+  } else {
+    delta = cur.white_win_rate - prev.white_win_rate
+    playerRate = cur.white_win_rate
   }
-  if (moveCount.value === 0) return null
-  const m = moveHistory.value[moveCount.value - 1]
-  return m ? { row: m.row, col: m.col } : null
+  if (playerRate >= 0.95) return { text: '绝杀手', color: '#ff2d55', desc: '必胜之着', delta }
+  if (playerRate >= 0.85) return { text: '决胜手', color: '#ff6b6b', desc: '胜势确立', delta }
+  if (delta >= 0.20) return { text: '妙手', color: '#ffd700', desc: '精妙着法', delta }
+  if (delta >= 0.08) return { text: '好手', color: '#4ecdc4', desc: '取得优势', delta }
+  if (delta >= -0.08) return { text: '正常', color: '#aaa', desc: '平稳进行', delta }
+  if (delta >= -0.20) return { text: '疑问手', color: '#e6a817', desc: '略有亏损', delta }
+  return { text: '昏招', color: '#dc3545', desc: '严重失误', delta }
 })
 
-const replayTotal = computed(() => replayMoves.value.length)
+const replayMoves = computed(() => {
+  return moveHistory.value.map((m, i) => ({
+    ...m,
+    analysis: moveAnalysisHistory.value[i] || null,
+  }))
+})
 
 const displayBoard = computed(() => {
   if (!replayMode.value) return board.value
   const b = createBoard()
   for (let i = 0; i <= replayStep.value; i++) {
-    const m = replayMoves.value[i]
+    const m = moveHistory.value[i]
     if (m) b[m.row][m.col] = m.player
   }
   return b
 })
 
-const replayCurrentAnalysis = computed(() => {
-  if (!replayMode.value || replayStep.value < 0) return null
-  const move = replayMoves.value[replayStep.value]
-  if (!move || !move.analysis) return null
-  return { black_win_rate: move.analysis.black_win_rate, white_win_rate: move.analysis.white_win_rate }
-})
+const unsubFns = []
 
-const replayCurrentLabel = computed(() => {
-  if (!replayMode.value) return null
-  if (replayStep.value < 0 || !replayMoves.value[replayStep.value]) {
-    return { text: '开局', color: '#aaa', desc: '', delta: null }
+onMounted(() => {
+  if (!wsClient.isConnected()) {
+    wsClient.connect(playerName.value, authStore.accessToken)
   }
-  const move = replayMoves.value[replayStep.value]
-  const prevMove = replayStep.value > 0 ? replayMoves.value[replayStep.value - 1] : null
-  const prevAnalysis = prevMove && prevMove.analysis ? prevMove.analysis : null
-  return getMoveLabel(move, prevAnalysis)
+
+  // Apply pending game state (set by LobbyView before navigation)
+  const pending = gameStore.pendingGameState
+  if (pending) {
+    gameStore.pendingGameState = null
+    board.value = _parseBoard(pending.board)
+    currentTurn.value = pending.currentTurn
+    myTurn.value = pending.myTurn
+    moveHistory.value = (pending.moveHistory || []).map(m => ({ ...m }))
+    moveCount.value = pending.moveHistory.length
+    lastMove.value = _lastFromHistory(pending.moveHistory)
+    blackMoveCount.value = pending.moveHistory.filter(m => m.player === 1).length
+    whiteMoveCount.value = pending.moveHistory.filter(m => m.player === 2).length
+  }
+
+  unsubFns.push(wsClient.on('room_joined', (msg) => {
+    opponentName.value = msg.opponent_name
+    opponentTitle.value = msg.opponent_title || null
+    showOpponentEntry.value = true
+    setTimeout(() => showOpponentEntry.value = false, 1500)
+  }))
+
+  unsubFns.push(wsClient.on('opponent_joined', (msg) => {
+    opponentName.value = msg.player_name
+    opponentTitle.value = msg.player_title || null
+    showOpponentEntry.value = true
+    setTimeout(() => showOpponentEntry.value = false, 1500)
+  }))
+
+  unsubFns.push(wsClient.on('game_state', (msg) => {
+    board.value = _parseBoard(msg.board)
+    currentTurn.value = msg.current_turn
+    myTurn.value = msg.your_turn
+    moveCount.value = msg.move_history.length
+    moveHistory.value = msg.move_history.map(m => ({ ...m }))
+    blackMoveCount.value = msg.move_history.filter(m => m.player === BLACK).length
+    whiteMoveCount.value = msg.move_history.filter(m => m.player === WHITE).length
+    lastMove.value = _lastFromHistory(msg.move_history)
+  }))
+
+  unsubFns.push(wsClient.on('stone_placed', (msg) => {
+    audioManager.playStone()
+    const r = msg.row, c = msg.col
+    const p = msg.player === 'black' ? BLACK : WHITE
+    board.value = board.value.map((row, ri) =>
+      row.map((cell, ci) => (ri === r && ci === c ? p : cell))
+    )
+    currentTurn.value = msg.current_turn
+    if (msg.player === 'black') blackMoveCount.value++
+    else whiteMoveCount.value++
+    moveCount.value++
+    moveHistory.value.push({ row: r, col: c, player: p })
+    moveAnalysisHistory.value.push(null)
+    lastMove.value = { row: r, col: c }
+  }))
+
+  unsubFns.push(wsClient.on('your_turn', (msg) => {
+    myTurn.value = msg.your_turn
+  }))
+
+  unsubFns.push(wsClient.on('analysis_result', (msg) => {
+    if (msg.analysis) {
+      analysis.value = msg.analysis
+      analyzing.value = false
+      const idx = moveCount.value - 1
+      if (idx >= 0) moveAnalysisHistory.value[idx] = msg.analysis
+    }
+  }))
+
+  unsubFns.push(wsClient.on('game_over', (msg) => {
+    gameOver.value = true
+    winner.value = msg.winner || ''
+    gameResult.value = msg.reason || ''
+    myTurn.value = false
+    const myColor = playerColor.value === 'black' ? BLACK : WHITE
+    if (msg.winner === 'black') (myColor === BLACK ? audioManager.playWin() : audioManager.playLose())
+    else if (msg.winner === 'white') (myColor === WHITE ? audioManager.playWin() : audioManager.playLose())
+    saveGameToHistory()
+    requestGameReview()
+  }))
+
+  unsubFns.push(wsClient.on('undo_success', (msg) => {
+    board.value = _parseBoard(msg.board)
+    currentTurn.value = msg.current_turn
+    moveCount.value = msg.move_history.length
+    moveHistory.value = msg.move_history.map(m => ({ ...m }))
+    moveAnalysisHistory.value = moveAnalysisHistory.value.slice(0, moveCount.value)
+    blackMoveCount.value = msg.move_history.filter(m => m.player === BLACK).length
+    whiteMoveCount.value = msg.move_history.filter(m => m.player === WHITE).length
+    myTurn.value = currentTurn.value === playerColor.value
+    lastMove.value = _lastFromHistory(msg.move_history)
+  }))
+
+  unsubFns.push(wsClient.on('undo_offered', (msg) => { undoOfferBy.value = msg.by }))
+  unsubFns.push(wsClient.on('undo_declined', () => { undoOfferBy.value = '' }))
+  unsubFns.push(wsClient.on('draw_offered', (msg) => { drawOfferBy.value = msg.by }))
+  unsubFns.push(wsClient.on('draw_declined', () => { drawOfferBy.value = '' }))
+
+  unsubFns.push(wsClient.on('opponent_disconnected', (msg) => {
+    opponentName.value = msg.message || '对手断线了'
+  }))
+
+  unsubFns.push(wsClient.on('opponent_left', (msg) => {
+    opponentName.value = msg.message || '对手离开了'
+    gameOver.value = true
+  }))
+
+  unsubFns.push(wsClient.on('error', (msg) => {
+    errorMsg.value = msg.message
+    setTimeout(() => errorMsg.value = '', 3000)
+  }))
+
+  unsubFns.push(wsClient.on('timer_update', (msg) => {
+    blackTime.value = msg.black_time
+    whiteTime.value = msg.white_time
+  }))
+
+  unsubFns.push(wsClient.on('chat', (msg) => {
+    chatStore.addRoomMessage(roomId, msg)
+  }))
+
+  unsubFns.push(wsClient.on('close', () => {
+    errorMsg.value = '连接已断开'
+  }))
+
+  unsubFns.push(wsClient.on('reconnect_limit', () => {
+    errorMsg.value = '无法连接服务器，请刷新页面重试'
+  }))
 })
 
-function resetGame() {
-  board.value = createBoard()
-  currentTurn.value = BLACK
-  gameOver.value = false
-  winner.value = ''
-  gameResult.value = ''
-  moveCount.value = 0
-  moveHistory.value = []
-  blackMoveCount.value = 0
-  whiteMoveCount.value = 0
-  analysis.value = null
-  analyzing.value = false
-  drawOfferBy.value = ''
-  reviews.value = []
-  reviewsLoading.value = false
-  forbiddenMessage.value = ''
+function sendChat(text) {
+  if (!text) return
+  wsClient.send({ type: 'chat', message: text, room_id: roomId })
+}
+
+onUnmounted(() => {
+  wsClient.send({ type: 'leave_room' })
+  wsClient.disconnect()
+  unsubFns.forEach(fn => fn())
+  gameStore.reset()
+})
+
+function _parseBoard(apiBoard) {
+  return apiBoard.map(row =>
+    row.map(cell => {
+      if (cell === 'black') return BLACK
+      if (cell === 'white') return WHITE
+      return 0
+    })
+  )
+}
+
+function _lastFromHistory(history) {
+  if (!history || history.length === 0) return null
+  const m = history[history.length - 1]
+  return { row: m.row, col: m.col }
 }
 
 function handlePlaceStone({ row, col }) {
-  if (gameOver.value || replayMode.value) return
-  if (!isValidMove(board.value, row, col)) return
-  if (currentTurn.value === BLACK) {
-    const reason = checkForbiddenMove(board.value, row, col, BLACK)
-    if (reason) {
-      forbiddenMessage.value = reason
-      setTimeout(() => forbiddenMessage.value = '', 3000)
-      return
-    }
-  }
-  placeStone(board.value, row, col, currentTurn.value)
-  audioManager.playStone()
-
-  moveCount.value++
-  moveHistory.value.push({ row, col, player: currentTurn.value })
-  if (currentTurn.value === BLACK) blackMoveCount.value++
-  else whiteMoveCount.value++
-
-  const win = checkWin(board.value, row, col)
-  if (win !== null) {
-    gameOver.value = true
-    winner.value = getStoneName(win)
-    gameResult.value = win === BLACK ? 'black_win' : 'white_win'
-    if (win === BLACK) audioManager.playWin()
-    else audioManager.playLose()
-    saveGameToHistory()
-    requestGameReview()
-    return
-  }
-
-  currentTurn.value = currentTurn.value === BLACK ? WHITE : BLACK
-  handleRequestAnalysis()
+  if (gameOver.value || !myTurn.value || waiting.value) return
+  wsClient.send({ type: 'place_stone', row, col })
 }
 
 function handleUndo() {
-  if (moveCount.value === 0 || gameOver.value || replayMode.value) return
-  const last = moveHistory.value.pop()
-  if (!last) return
-  board.value[last.row][last.col] = 0
-  moveCount.value--
-  if (last.player === BLACK) blackMoveCount.value--
-  else whiteMoveCount.value--
-  currentTurn.value = last.player
-  analysis.value = null
+  if (gameOver.value || waiting.value || moveCount.value === 0) return
+  wsClient.send({ type: 'undo_request' })
+}
+
+function handleUndoResponse(accept) {
+  wsClient.send({ type: 'undo_response', accept })
+  undoOfferBy.value = ''
 }
 
 function handleResign() {
-  if (gameOver.value || replayMode.value) return
-  gameOver.value = true
-  if (currentTurn.value === BLACK) {
-    winner.value = 'white'
-    gameResult.value = 'resign_black'
-  } else {
-    winner.value = 'black'
-    gameResult.value = 'resign_white'
-  }
-  saveGameToHistory()
-  requestGameReview()
+  if (gameOver.value || waiting.value) return
+  wsClient.send({ type: 'resign' })
 }
 
 function handleDrawRequest() {
-  if (gameOver.value || replayMode.value || drawOfferBy.value) return
-  drawOfferBy.value = getStoneName(currentTurn.value)
+  if (gameOver.value || waiting.value || drawOfferBy.value) return
+  wsClient.send({ type: 'draw_request' })
 }
 
 function handleDrawResponse(accept) {
-  if (accept) {
-    gameOver.value = true
-    winner.value = ''
-    gameResult.value = 'draw'
-    saveGameToHistory()
-    requestGameReview()
-  }
+  wsClient.send({ type: 'draw_response', accept })
   drawOfferBy.value = ''
 }
 
-async function handleRequestAnalysis() {
-  if (analyzing.value || gameOver.value || replayMode.value) return
-  analyzing.value = true
-  let result = await requestAnalysis(board.value)
-  if (!result) result = { black_win_rate: 0.5, white_win_rate: 0.5 }
-
-  if (countForcedWins(board.value, BLACK) >= 2) {
-    result = { black_win_rate: 1.0, white_win_rate: 0.0 }
-  } else if (countForcedWins(board.value, WHITE) >= 2) {
-    result = { black_win_rate: 0.0, white_win_rate: 1.0 }
-  }
-
-  analysis.value = result
-
-  const lastMove = moveHistory.value[moveHistory.value.length - 1]
-  if (lastMove) {
-    lastMove.analysis = { ...result }
-  }
-
-  analyzing.value = false
+function leaveRoom() {
+  router.push('/lobby')
 }
 
-async function requestGameReview() {
-  reviewsLoading.value = true
-  const data = await requestReview(
-    moveHistory.value.map(m => ({ row: m.row, col: m.col, player: m.player })),
-    gameResult.value,
-  )
-  if (data && data.reviews) {
-    reviews.value = data.reviews
-    updateLastHistoryEntryReviews(data.reviews)
-  }
-  reviewsLoading.value = false
-}
-
-function updateLastHistoryEntryReviews(reviewData) {
-  try {
-    const history = JSON.parse(localStorage.getItem('gomoku_history') || '[]')
-    if (history.length === 0) return
-    history[history.length - 1].reviews = reviewData
-    localStorage.setItem('gomoku_history', JSON.stringify(history))
-  } catch {}
+function formatResult(reason) {
+  if (reason === '和棋') return 'draw'
+  if (reason === '黑方认负' || reason === 'black认负') return 'resign_black'
+  if (reason === '白方认负' || reason === 'white认负') return 'resign_white'
+  if (winner.value === 'black') return 'black_win'
+  if (winner.value === 'white') return 'white_win'
+  return ''
 }
 
 function saveGameToHistory() {
   const entry = {
     id: Date.now(),
     timestamp: new Date().toLocaleString('zh-CN'),
-    result: gameResult.value,
+    result: formatResult(gameResult.value) || gameResult.value,
     winner: winner.value,
-    moves: moveHistory.value.map(m => ({
-      row: m.row,
-      col: m.col,
-      player: m.player,
-      analysis: m.analysis || null,
+    moves: moveHistory.value.map((m, i) => ({
+      row: m.row, col: m.col, player: m.player,
+      analysis: moveAnalysisHistory.value[i] || null,
     })),
     blackMoveCount: blackMoveCount.value,
     whiteMoveCount: whiteMoveCount.value,
     reviews: reviews.value,
   }
-  const history = JSON.parse(localStorage.getItem('gomoku_history') || '[]')
-  history.push(entry)
-  localStorage.setItem('gomoku_history', JSON.stringify(history))
+  try {
+    const history = JSON.parse(localStorage.getItem('gomoku_history') || '[]')
+    history.push(entry)
+    localStorage.setItem('gomoku_history', JSON.stringify(history))
+  } catch {}
 }
 
-function enterReplay(data) {
-  replayMode.value = true
-  gameOver.value = true
-  winner.value = data.winner || ''
-  gameResult.value = data.result || ''
-  blackMoveCount.value = data.blackMoveCount || 0
-  whiteMoveCount.value = data.whiteMoveCount || 0
-  replayMoves.value = data.moves || []
-  reviews.value = data.reviews || []
-  replayStep.value = -1
+async function requestGameReview() {
+  if (moveHistory.value.length === 0) return
+  reviewsLoading.value = true
+  const data = await requestReview(
+    moveHistory.value.map(m => ({ row: m.row, col: m.col, player: m.player })),
+    formatResult(gameResult.value),
+  )
+  if (data && data.reviews) reviews.value = data.reviews
+  reviewsLoading.value = false
 }
 
-function exitReplay() {
-  replayMode.value = false
-  replayMoves.value = []
-  replayStep.value = -1
-  resetGame()
-}
-
-function replayGoTo(step) {
-  replayStep.value = Math.max(-1, Math.min(step, replayMoves.value.length - 1))
-}
-
-function replayNext() {
-  if (replayStep.value < replayMoves.value.length - 1) replayStep.value++
-}
-
-function replayPrev() {
-  if (replayStep.value >= 0) replayStep.value--
-}
-
-onMounted(() => {
-  if (props.replayGameData) {
-    enterReplay(props.replayGameData)
-  }
-})
-
-watch(() => props.replayGameData, (val) => {
-  if (val) {
-    resetGame()
-    enterReplay(val)
-  }
-})
+function enterReplay() { replayMode.value = true; replayStep.value = moveCount.value - 1 }
+function exitReplay() { replayMode.value = false; replayStep.value = -1 }
+function replayGoTo(step) { replayStep.value = Math.max(-1, Math.min(step, moveCount.value - 1)) }
+function replayNext() { if (replayStep.value < moveCount.value - 1) replayStep.value++ }
+function replayPrev() { if (replayStep.value >= 0) replayStep.value-- }
 </script>
 
 <template>
-  <div v-if="forbiddenMessage" class="forbidden-toast">{{ forbiddenMessage }}</div>
-  <div class="game-layout">
-    <div class="left-column">
-      <GameBoard
-        :board="displayBoard"
-        :current-turn="getStoneName(currentTurn)"
-        :game-over="gameOver"
-        :readonly="replayMode"
-        :replay-label="replayCurrentLabel"
-        :last-move="lastMove"
-        @place-stone="handlePlaceStone"
-      />
-      <div v-if="replayMode" class="replay-controls">
-        <button class="replay-btn" @click="replayGoTo(-1)" title="开局">|◁</button>
-        <button class="replay-btn" @click="replayPrev" title="上一步">◁</button>
-        <span class="replay-step">
-          <template v-if="replayStep === -1">开局</template>
-          <template v-else>第 {{ replayStep + 1 }} / {{ replayTotal }} 手</template>
-        </span>
-        <button class="replay-btn" @click="replayNext" title="下一步">▷</button>
-        <button class="replay-btn" @click="replayGoTo(replayTotal - 1)" title="终局">▷|</button>
+  <div v-if="errorMsg" class="error-toast">{{ errorMsg }}</div>
+
+  <!-- DESKTOP LAYOUT -->
+  <template v-if="!isMobile">
+    <div class="game-layout" :style="{ backgroundImage: customBackground }">
+      <!-- TOP BAR -->
+      <div class="grid-top">
+        <div class="room-info">
+          <span class="room-badge">#{{ roomId }}</span>
+          <span class="my-color">{{ myColorLabel }}</span>
+          <span class="room-vs">{{ playerName }} vs {{ opponentName }}</span>
+        </div>
+        <TimerDisplay v-if="!waiting"
+          :black-time="blackTime" :white-time="whiteTime"
+          :active-color="currentTurn" />
       </div>
-    </div>
-    <div class="right-column">
-      <GameInfo
-        :current-turn="getStoneName(currentTurn)"
-        :game-over="gameOver"
-        :winner="winner"
-        :game-result="gameResult"
-        :black-move-count="blackMoveCount"
-        :white-move-count="whiteMoveCount"
-      />
-      <template v-if="replayMode">
-        <WinRatePanel
-          :analysis="replayCurrentAnalysis || { black_win_rate: 0.5, white_win_rate: 0.5 }"
-          :loading="false"
-          :move-label="replayCurrentLabel"
+
+      <!-- LEFT PANEL -->
+      <div class="grid-left">
+        <div class="player-info">
+          <div class="player-row">
+            <span class="player-label">你</span>
+            <span class="player-name">{{ playerName }}</span>
+            <TitleBadge :title="authStore.title" size="sm" />
+            <span class="player-dot" :class="playerColor"></span>
+          </div>
+          <div class="player-row">
+            <span class="player-label">对手</span>
+            <span class="player-name">{{ opponentName }}</span>
+            <TitleBadge v-if="opponentTitle" :title="opponentTitle" size="sm" :animate="showOpponentEntry" @animation-end="showOpponentEntry = false" />
+            <span class="player-dot" :class="playerColor === 'black' ? 'white' : 'black'"></span>
+          </div>
+        </div>
+
+        <GameInfo
+          :current-turn="getStoneName(currentTurn === 'black' ? BLACK : WHITE)"
+          :game-over="gameOver"
+          :winner="winner"
+          :game-result="gameResult"
+          :black-move-count="blackMoveCount"
+          :white-move-count="whiteMoveCount"
         />
+
+        <template v-if="!waiting && !replayMode">
+          <div v-if="!gameOver" class="action-row">
+            <button class="btn-action btn-undo" :disabled="!myTurn || moveCount === 0 || undoOfferBy !== ''" @click="handleUndo">悔棋</button>
+            <button class="btn-action btn-draw" :disabled="drawOfferBy !== ''" @click="handleDrawRequest">求和</button>
+            <button class="btn-action btn-resign" @click="handleResign">认输</button>
+          </div>
+          <div v-else class="game-over-actions">
+            <button class="btn-action btn-restart" @click="leaveRoom">返回大厅</button>
+            <button v-if="reviewsLoading || reviews.length > 0" class="btn-action btn-review" @click="enterReplay">
+              {{ reviewsLoading ? '评价加载中...' : '查看复盘' }}
+            </button>
+          </div>
+        </template>
+      </div>
+
+      <!-- BOARD -->
+      <div class="grid-board">
+        <GameBoard
+          :board="displayBoard"
+          :board-image="authStore.boardImage"
+          :current-turn="getStoneName(currentTurn === 'black' ? BLACK : WHITE)"
+          :game-over="gameOver"
+          :readonly="!myTurn || gameOver || replayMode || waiting"
+          :last-move="replayMode ? (replayStep >= 0 ? { row: moveHistory[replayStep]?.row, col: moveHistory[replayStep]?.col } : null) : lastMove"
+          @place-stone="handlePlaceStone"
+        />
+      </div>
+
+      <!-- RIGHT PANEL -->
+      <div class="grid-right">
+        <template v-if="waiting">
+          <div class="waiting-msg">等待对手加入...</div>
+        </template>
+        <template v-else>
+          <WinRatePanel :analysis="analysis" :loading="analyzing" :move-label="currentMoveLabel" />
+          <button class="btn-action btn-analysis" :disabled="analyzing" @click="wsClient.send({ type: 'request_analysis' })">
+            {{ analyzing ? '分析中...' : '刷新分析' }}
+          </button>
+        </template>
+        <ChatBox :room-id="roomId" @send="sendChat" />
+      </div>
+
+      <!-- BOTTOM BAR -->
+      <div v-if="replayMode" class="grid-bottom">
         <ReplayMoveList
           :moves="replayMoves"
           :current-step="replayStep"
@@ -348,56 +446,118 @@ watch(() => props.replayGameData, (val) => {
           :reviews-loading="reviewsLoading"
           @go-to-step="replayGoTo"
         />
-      </template>
-      <template v-else>
-        <WinRatePanel
-          :analysis="analysis"
-          :loading="analyzing"
-        />
-      </template>
-      <template v-if="!replayMode">
-        <button
-          class="btn-action btn-analysis"
-          :disabled="analyzing || gameOver"
-          @click="handleRequestAnalysis"
-        >
-          {{ analyzing ? '分析中（约10-30秒）' : '刷新分析' }}
-        </button>
-        <div v-if="!gameOver" class="action-row">
-          <button
-            class="btn-action btn-undo"
-            :disabled="moveCount === 0"
-            @click="handleUndo"
-          >悔棋</button>
-          <button
-            class="btn-action btn-draw"
-            :disabled="drawOfferBy !== ''"
-            @click="handleDrawRequest"
-          >求和</button>
-          <button
-            class="btn-action btn-resign"
-            @click="handleResign"
-          >认输</button>
+        <div class="replay-controls">
+          <button class="replay-btn" @click="replayPrev" title="上一步">◁</button>
+          <span class="replay-step-info">
+            <template v-if="replayStep === -1">开局</template>
+            <template v-else>第 {{ replayStep + 1 }} / {{ moveCount }} 手</template>
+          </span>
+          <button class="replay-btn" @click="replayNext" title="下一步">▷</button>
         </div>
-        <button
-          v-if="gameOver"
-          class="btn-action btn-restart"
-          @click="resetGame"
-        >再来一局</button>
-      </template>
-      <template v-else>
-        <button class="btn-action btn-restart" @click="exitReplay">退出回放</button>
-      </template>
+        <button class="btn-action btn-restart" @click="exitReplay">退出复盘</button>
+      </div>
     </div>
-  </div>
+  </template>
+
+  <!-- MOBILE LAYOUT -->
+  <template v-else>
+    <div class="mobile-game-layout">
+      <!-- Top bar -->
+      <div class="mobile-top-bar">
+        <div class="room-info">
+          <span class="room-badge">#{{ roomId }}</span>
+          <span class="my-color">{{ myColorLabel }}</span>
+          <span class="room-vs">{{ playerName }} vs {{ opponentName }}</span>
+        </div>
+      </div>
+
+      <!-- Timer bar -->
+      <div class="mobile-timer-bar" v-if="!waiting">
+        <TimerDisplay
+          :black-time="blackTime" :white-time="whiteTime"
+          :active-color="currentTurn"
+        />
+      </div>
+
+      <!-- Board -->
+      <div class="mobile-board-area">
+        <GameBoard
+          :board="displayBoard"
+          :board-image="authStore.boardImage"
+          :current-turn="getStoneName(currentTurn === 'black' ? BLACK : WHITE)"
+          :game-over="gameOver"
+          :readonly="!myTurn || gameOver || replayMode || waiting"
+          :last-move="replayMode ? (replayStep >= 0 ? { row: moveHistory[replayStep]?.row, col: moveHistory[replayStep]?.col } : null) : lastMove"
+          :parent-width="mobileBoardWidth"
+          @place-stone="handlePlaceStone"
+        />
+      </div>
+
+      <!-- Replay controls (mobile) -->
+      <div v-if="replayMode" class="mobile-replay-bar">
+        <div class="replay-controls">
+          <button class="replay-btn" @click="replayPrev" title="上一步">◁</button>
+          <span class="replay-step-info">
+            <template v-if="replayStep === -1">开局</template>
+            <template v-else>第 {{ replayStep + 1 }} / {{ moveCount }} 手</template>
+          </span>
+          <button class="replay-btn" @click="replayNext" title="下一步">▷</button>
+        </div>
+        <div class="replay-bottom-row">
+          <button class="btn-action btn-restart" @click="exitReplay">退出复盘</button>
+        </div>
+      </div>
+
+      <!-- Floating action bar (above GameDrawer) -->
+      <template v-if="!waiting && !replayMode">
+        <div v-if="!gameOver" class="mobile-action-bar">
+          <button class="btn-action btn-undo" :disabled="!myTurn || moveCount === 0 || undoOfferBy !== ''" @click="handleUndo">悔棋</button>
+          <button class="btn-action btn-draw" :disabled="drawOfferBy !== ''" @click="handleDrawRequest">求和</button>
+          <button class="btn-action btn-resign" @click="handleResign">认输</button>
+        </div>
+        <div v-else class="mobile-action-bar">
+          <button class="btn-action btn-restart" @click="leaveRoom">返回大厅</button>
+          <button v-if="reviewsLoading || reviews.length > 0" class="btn-action btn-review" @click="enterReplay">
+            {{ reviewsLoading ? '评价加载中...' : '查看复盘' }}
+          </button>
+        </div>
+      </template>
+
+      <!-- Bottom Drawer -->
+      <GameDrawer
+        :current-turn="getStoneName(currentTurn === 'black' ? BLACK : WHITE)"
+        :game-over="gameOver"
+        :winner="winner"
+        :game-result="gameResult"
+        :black-move-count="blackMoveCount"
+        :white-move-count="whiteMoveCount"
+        :analysis="analysis"
+        :analyzing="analyzing"
+        :move-label="currentMoveLabel"
+        :room-id="roomId"
+        :waiting="waiting"
+        @send-chat="sendChat"
+      />
+
+    </div>
+  </template>
 
   <Teleport to="body">
-    <div v-if="drawOfferBy" class="draw-overlay" @click.self="handleDrawResponse(false)">
-      <div class="draw-dialog">
-        <p>{{ drawOfferBy === 'black' ? '黑方' : '白方' }}请求和棋，是否接受？</p>
-        <div class="draw-buttons">
-          <button class="btn-draw-accept" @click="handleDrawResponse(true)">接受</button>
-          <button class="btn-draw-reject" @click="handleDrawResponse(false)">拒绝</button>
+    <div v-if="drawOfferBy" class="overlay" @click.self="handleDrawResponse(false)">
+      <div class="dialog">
+        <p>对手请求和棋，是否接受？</p>
+        <div class="dialog-buttons">
+          <button class="btn-accept" @click="handleDrawResponse(true)">接受</button>
+          <button class="btn-reject" @click="handleDrawResponse(false)">拒绝</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="undoOfferBy" class="overlay">
+      <div class="dialog">
+        <p>对手请求悔棋，是否接受？</p>
+        <div class="dialog-buttons">
+          <button class="btn-accept" @click="handleUndoResponse(true)">接受</button>
+          <button class="btn-reject" @click="handleUndoResponse(false)">拒绝</button>
         </div>
       </div>
     </div>
@@ -407,125 +567,88 @@ watch(() => props.replayGameData, (val) => {
 <style scoped>
 .game-layout {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 20px;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "top    top    top"
+    "left   board  right"
+    "bottom bottom bottom";
+  gap: 16px;
   width: 100%;
-  align-items: start;
+  min-height: 100%;
+  padding: 20px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: 12px;
 }
 
-.left-column {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
+.grid-top { grid-area: top; display: flex; align-items: center; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.grid-left { grid-area: left; display: flex; flex-direction: column; gap: 12px; min-width: 180px; max-width: 220px; }
+.grid-board { grid-area: board; justify-self: center; align-self: center; }
+.grid-right { grid-area: right; display: flex; flex-direction: column; gap: 12px; width: 260px; }
+.grid-bottom { grid-area: bottom; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 
-.right-column {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 220px;
-}
-
-.replay-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
+.room-info {
+  display: flex; align-items: center; gap: 10px;
   background: rgba(22, 33, 62, 0.85);
   backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 10px 16px;
+  border: 1px solid rgba(255,255,255,0.06);
   border-radius: 10px;
+  padding: 10px 16px;
 }
+.room-badge { font-family: monospace; font-size: 0.95rem; font-weight: 700; color: #667eea; background: #0f3460; padding: 4px 10px; border-radius: 6px; }
+.my-color { font-size: 0.85rem; color: #aaa; }
+.room-vs { font-size: 0.85rem; color: #888; }
 
-.replay-btn {
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: #0f3460;
-  color: #eee;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 1rem;
-  font-weight: 700;
-  transition: background 0.2s;
+.player-info {
+  background: rgba(22, 33, 62, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 12px 16px;
 }
+.player-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.player-label { color: #888; font-size: 0.85rem; min-width: 30px; }
+.player-name { flex: 1; font-size: 0.9rem; }
+.player-dot { width: 12px; height: 12px; border-radius: 50%; }
+.player-dot.black { background: #222; }
+.player-dot.white { background: #ddd; border: 1px solid #888; }
 
-.replay-btn:hover {
-  background: #533483;
-}
+.waiting-msg { text-align: center; padding: 32px; color: #888; font-size: 0.95rem; }
 
-.replay-step {
-  font-size: 0.85rem;
-  color: #aaa;
-  min-width: 80px;
-  text-align: center;
-  font-family: monospace;
-}
-
-.action-row {
-  display: flex;
-  gap: 8px;
-}
+.action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.game-over-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .btn-action {
-  padding: 10px 14px;
-  border: none;
-  color: #fff;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 600;
-  transition: opacity 0.2s;
-  flex: 1;
+  padding: 10px 14px; border: none; color: #fff; border-radius: 8px; cursor: pointer;
+  font-size: 0.85rem; font-weight: 600; transition: opacity 0.2s; flex: 1;
 }
+.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-action:hover:not(:disabled) { opacity: 0.9; }
+.btn-analysis { background: linear-gradient(135deg, #667eea, #764ba2); }
+.btn-undo { background: #e6a817; }
+.btn-draw { background: #17a2b8; }
+.btn-resign { background: #dc3545; }
+.btn-restart { background: #533483; }
+.btn-review { background: #533483; }
 
-.btn-action:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.replay-controls {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(22, 33, 62, 0.85); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.06); padding: 10px 16px; border-radius: 10px;
 }
+.replay-btn { width: 36px; height: 36px; border: none; background: #0f3460; color: #eee; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: 700; }
+.replay-btn:hover { background: #533483; }
+.replay-step-info { font-size: 0.85rem; color: #aaa; min-width: 80px; text-align: center; font-family: monospace; }
 
-.btn-action:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.btn-analysis {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-}
-
-.btn-undo {
-  background: #e6a817;
-}
-
-.btn-draw {
-  background: #17a2b8;
-}
-
-.btn-resign {
-  background: #dc3545;
-}
-
-.btn-restart {
-  background: #533483;
-}
-
-.forbidden-toast {
-  position: fixed;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #dc3545;
-  color: #fff;
-  padding: 10px 24px;
-  border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 700;
-  z-index: 200;
-  box-shadow: 0 4px 16px rgba(220, 53, 69, 0.4);
+.error-toast {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  background: #dc3545; color: #fff; padding: 10px 24px; border-radius: 8px;
+  font-size: 1rem; font-weight: 700; z-index: 200;
+  box-shadow: 0 4px 16px rgba(220,53,69,0.4);
   animation: fadeInOut 3s ease forwards;
 }
-
 @keyframes fadeInOut {
   0% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
   10% { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -533,68 +656,121 @@ watch(() => props.replayGameData, (val) => {
   100% { opacity: 0; }
 }
 
-@media (max-width: 820px) {
-  .game-layout {
-    grid-template-columns: 1fr;
-  }
+/* Mobile layout */
+.mobile-game-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 100%;
+  padding-bottom: calc(56px + 80px + env(safe-area-inset-bottom, 0px));
 }
+
+.mobile-top-bar {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.mobile-timer-bar {
+  width: 100%;
+  max-width: 400px;
+}
+
+.mobile-board-area {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  flex: 1;
+  align-items: center;
+}
+
+.mobile-action-bar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  justify-content: center;
+  width: 100%;
+}
+
+.mobile-action-bar .btn-action {
+  flex: 0 1 auto;
+  min-width: 80px;
+  max-width: 120px;
+  padding: 10px 16px;
+  font-size: 0.85rem;
+  min-height: 44px;
+}
+
+.mobile-replay-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  width: 100%;
+  background: rgba(15, 15, 40, 0.95);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px 12px 0 0;
+}
+
+.mobile-replay-bar .replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-replay-bar .replay-step-info {
+  font-size: 0.85rem;
+  color: #aaa;
+  min-width: 80px;
+  text-align: center;
+  font-family: monospace;
+}
+
+.mobile-replay-bar .replay-btn {
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: #0f3460;
+  color: #eee;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 700;
+  min-height: 44px;
+}
+
+.mobile-replay-bar .replay-btn:active {
+  opacity: 0.7;
+}
+
+.replay-bottom-row {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.mobile-replay-bar .btn-restart {
+  padding: 10px 24px;
+  min-height: 44px;
+}
+
 </style>
 
 <style>
-.draw-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
+.overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100;
 }
-
-.draw-dialog {
-  background: #1a1a3e;
-  border-radius: 12px;
-  padding: 32px;
-  text-align: center;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  max-width: 320px;
+.dialog {
+  background: #1a1a3e; border-radius: 12px; padding: 32px; text-align: center;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5); max-width: 320px;
 }
-
-.draw-dialog p {
-  font-size: 1.1rem;
-  margin-bottom: 24px;
-  color: #eee;
-}
-
-.draw-buttons {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-}
-
-.draw-buttons button {
-  padding: 10px 28px;
-  border: none;
-  border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  color: #fff;
-  transition: opacity 0.2s;
-}
-
-.draw-buttons button:hover {
-  opacity: 0.9;
-}
-
-.btn-draw-accept {
-  background: #28a745;
-}
-
-.btn-draw-reject {
-  background: #6c757d;
-}
+.dialog p { font-size: 1.1rem; margin-bottom: 24px; color: #eee; }
+.dialog-buttons { display: flex; gap: 12px; justify-content: center; }
+.dialog-buttons button { padding: 10px 28px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; color: #fff; }
+.btn-accept { background: #28a745; }
+.btn-reject { background: #6c757d; }
 </style>

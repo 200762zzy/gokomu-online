@@ -1,7 +1,7 @@
 """Production server - serves both API and frontend static files."""
+import os
 import sys
 import socket
-import webbrowser
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -12,11 +12,15 @@ sys.path.insert(0, str(backend_dir))
 from app.main import app
 from fastapi.staticfiles import StaticFiles
 
+# Mount frontend dist — check multiple possible locations
 frontend_dist = backend_dir / "frontend_dist"
 if not frontend_dist.exists():
     frontend_dist = backend_dir.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    print(f"[deploy] Frontend mounted from {frontend_dist}")
+else:
+    print(f"[deploy] WARNING: Frontend dist not found, API-only mode")
 
 import uvicorn
 
@@ -87,13 +91,29 @@ class LANIPMiddleware:
 
 if __name__ == "__main__":
     if sys.stderr is None:
-        import os
         sys.stderr = open(os.devnull, 'w')
     if sys.stdout is None:
         sys.stdout = open(os.devnull, 'w')
-    lan_ip = get_lan_ip()
-    app.add_middleware(LANIPMiddleware, lan_ip=lan_ip, port=8000)
-    print(f"=> Local:   http://localhost:8000")
-    print(f"=> Network: http://{lan_ip}:8000")
-    webbrowser.open("http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # Determine host and port
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", os.getenv("WS_PORT", "8000")))
+
+    # In Docker/cloud, don't open browser
+    is_docker = os.path.exists("/.dockerenv") or os.getenv("RENDER") is not None
+    if not is_docker:
+        lan_ip = get_lan_ip()
+        app.add_middleware(LANIPMiddleware, lan_ip=lan_ip, port=port)
+        print(f"=> Local:   http://localhost:{port}")
+        print(f"=> Network: http://{lan_ip}:{port}")
+
+        try:
+            import webbrowser
+            webbrowser.open(f"http://localhost:{port}")
+        except Exception:
+            pass
+    else:
+        print(f"[deploy] Server starting on {host}:{port}")
+        print(f"[deploy] Health check: http://localhost:{port}/api/health")
+
+    uvicorn.run(app, host=host, port=port)
