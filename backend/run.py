@@ -1,119 +1,123 @@
-"""Production server - serves both API and frontend static files."""
+"""Gomoku Online server — starts API + frontend + ngrok tunnel for public access."""
 import os
 import sys
-import socket
+import json
+import time
+import urllib.request
+import subprocess
+import threading
+import webbrowser
 from pathlib import Path
 from dotenv import load_dotenv
 
-backend_dir = Path(sys._MEIPASS) if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") else Path(__file__).resolve().parent
+backend_dir = (
+    Path(sys._MEIPASS)
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+    else Path(__file__).resolve().parent
+)
 load_dotenv(backend_dir / ".env")
 sys.path.insert(0, str(backend_dir))
 
 from app.main import app
 from fastapi.staticfiles import StaticFiles
+import uvicorn
 
-# Mount frontend dist — check multiple possible locations
 frontend_dist = backend_dir / "frontend_dist"
 if not frontend_dist.exists():
     frontend_dist = backend_dir.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
-    print(f"[deploy] Frontend mounted from {frontend_dist}")
+    print(f"[server] Frontend mounted from {frontend_dist}")
 else:
-    print(f"[deploy] WARNING: Frontend dist not found, API-only mode")
+    print("[server] WARNING: Frontend dist not found, API-only mode")
 
-import uvicorn
-
-
-def get_lan_ip() -> str:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
-    except Exception:
-        return "127.0.0.1"
-    finally:
-        s.close()
+PORT = int(os.getenv("PORT", "8001"))
 
 
-class LANIPMiddleware:
-    def __init__(self, app, lan_ip: str, port: int):
-        self.app = app
-        self.lan_ip = lan_ip
-        self.port = port
+def wait_for_server(url: str, timeout: int = 20) -> bool:
+    for i in range(timeout):
+        try:
+            r = urllib.request.urlopen(url, timeout=2)
+            if r.status == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
 
-        script = f'<script>window.LAN_IP="{self.lan_ip}";window.LAN_PORT={self.port};</script>'.encode()
-        script_len = len(script)
+def get_ngrok_url(timeout: int = 30) -> str | None:
+    for i in range(timeout):
+        try:
+            r = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2)
+            data = json.loads(r.read())
+            tunnels = data.get("tunnels", [])
+            if tunnels:
+                return tunnels[0]["public_url"]
+        except Exception:
+            pass
+        time.sleep(1)
+    return None
 
-        async def send_with_injection(message):
-            if message["type"] == "http.response.start":
-                self._inject = False
-                headers = []
-                for name, value in message.get("headers", []):
-                    if name.lower() == b"content-type" and b"text/html" in value:
-                        self._inject = True
-                    headers.append((name, value))
-                if self._inject:
-                    new_headers = []
-                    for name, value in headers:
-                        if name.lower() == b"content-length":
-                            new_len = int(value) + script_len
-                            new_headers.append((name, str(new_len).encode()))
-                        else:
-                            new_headers.append((name, value))
-                    message = {
-                        "type": "http.response.start",
-                        "status": message["status"],
-                        "headers": new_headers,
-                    }
-                await send(message)
-            elif message["type"] == "http.response.body" and self._inject:
-                body = message.get("body", b"")
-                new_body = body.replace(b"</head>", script + b"</head>", 1)
-                if new_body == body:
-                    new_body = body + script
-                await send({
-                    "type": "http.response.body",
-                    "body": new_body,
-                    "more_body": message.get("more_body", False),
-                })
-                return
-            else:
-                await send(message)
 
-        await self.app(scope, receive, send_with_injection)
+def start_server():
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
 
 
 if __name__ == "__main__":
     if sys.stderr is None:
-        sys.stderr = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, "w")
     if sys.stdout is None:
-        sys.stdout = open(os.devnull, 'w')
+        sys.stdout = open(os.devnull, "w")
 
-    # Determine host and port
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", os.getenv("WS_PORT", "8000")))
+    print("=" * 48)
+    print("  Gomoku Online - 启动中...")
+    print("=" * 48)
+    print()
 
-    # In Docker/cloud, don't open browser
-    is_docker = os.path.exists("/.dockerenv") or os.getenv("RENDER") is not None or os.getenv("ZEABUR_SERVICE_ID") is not None
-    if not is_docker:
-        lan_ip = get_lan_ip()
-        app.add_middleware(LANIPMiddleware, lan_ip=lan_ip, port=port)
-        print(f"=> Local:   http://localhost:{port}")
-        print(f"=> Network: http://{lan_ip}:{port}")
+    print(f"[server] 启动后端 (端口 {PORT})...")
+    t = threading.Thread(target=start_server, daemon=True)
+    t.start()
 
-        try:
-            import webbrowser
-            webbrowser.open(f"http://localhost:{port}")
-        except Exception:
-            pass
-    else:
-        print(f"[deploy] Server starting on {host}:{port}")
-        print(f"[deploy] Health check: http://localhost:{port}/api/health")
+    if not wait_for_server(f"http://127.0.0.1:{PORT}/api/health"):
+        print("[server] 后端启动超时")
+        input("\n按 Enter 退出...")
+        sys.exit(1)
+    print("[server] 后端就绪")
 
-    uvicorn.run(app, host=host, port=port)
+    print("[ngrok] 启动隧道...")
+    ngrok_proc = subprocess.Popen(
+        ["ngrok", "http", str(PORT), "--log=stdout"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    ngrok_url = get_ngrok_url()
+    if not ngrok_url:
+        print("[ngrok] 获取公网地址失败")
+        print("[ngrok] 请确认已安装 ngrok 并配置 ngrok authtoken")
+        ngrok_proc.terminate()
+        input("\n按 Enter 退出...")
+        sys.exit(1)
+
+    with open(backend_dir / ".ngrok_url", "w") as f:
+        f.write(ngrok_url)
+
+    os.system("cls" if os.name == "nt" else "clear")
+    print("=" * 48)
+    print("  Gomoku Online 已上线!")
+    print("=" * 48)
+    print()
+    print(f"  公网地址: {ngrok_url}")
+    print(f"  ngrok管理: http://127.0.0.1:4040")
+    print()
+    print("  将此地址发给朋友即可加入对战")
+    print()
+    input("  按 Enter 键停止所有服务...")
+
+    ngrok_proc.terminate()
+    try:
+        ngrok_proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        ngrok_proc.kill()
+    print("已停止")
