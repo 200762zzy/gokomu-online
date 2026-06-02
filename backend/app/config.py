@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -6,10 +7,15 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 class Settings:
-    # Database
+    # Database — in EXE mode put db alongside the EXE; in dev mode put in backend/
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        _db_dir = Path(sys.executable).parent
+    else:
+        _db_dir = Path(__file__).resolve().parent.parent
+
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "sqlite+aiosqlite:///./gomoku.db",
+        f"sqlite+aiosqlite:///{_db_dir}/gomoku.db",
     )
 
     # JWT
