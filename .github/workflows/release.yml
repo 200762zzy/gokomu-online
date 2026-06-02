@@ -31,7 +31,9 @@ jobs:
         run: pip install -r backend/requirements.txt pyinstaller
 
       - name: Pack EXE
-        run: pyinstaller --onefile --name GomokuOnline backend/run.py --add-data "frontend\dist;frontend_dist" --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto --hidden-import uvicorn.loops.asyncio --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets.auto --hidden-import httpx --hidden-import aiosqlite --distpath dist\GomokuOnline
+        run: python backend/build_exe.py
+        env:
+          PYINSTALLER_DISTPATH: dist\GomokuOnline
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
