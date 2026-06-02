@@ -100,7 +100,7 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", os.getenv("WS_PORT", "8000")))
 
     # In Docker/cloud, don't open browser
-    is_docker = os.path.exists("/.dockerenv") or os.getenv("RENDER") is not None
+    is_docker = os.path.exists("/.dockerenv") or os.getenv("RENDER") is not None or os.getenv("ZEABUR_SERVICE_ID") is not None
     if not is_docker:
         lan_ip = get_lan_ip()
         app.add_middleware(LANIPMiddleware, lan_ip=lan_ip, port=port)
