@@ -7,10 +7,18 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 class Settings:
     # Database
-    DATABASE_URL: str = os.getenv(
+    _db_url: str = os.getenv(
         "DATABASE_URL",
         "sqlite+aiosqlite:///./gomoku.db",
     )
+
+    @property
+    def DATABASE_URL(self) -> str:
+        # Render PostgreSQL URL (postgresql://...) -> SQLAlchemy async format
+        url = self._db_url
+        if url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
 
     # JWT
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "dev-secret-key-change-in-production")
