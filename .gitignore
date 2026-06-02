@@ -34,7 +34,7 @@ backend/static/
 dist/GomokuOnline/.env
 
 # Local SQLite database
-backend/gomoku.db
+*.db
 
 # Build artifacts
 GomokuOnline.exe
