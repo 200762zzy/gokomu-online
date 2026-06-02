@@ -81,7 +81,7 @@ if __name__ == "__main__":
 
     if not wait_for_server(f"http://127.0.0.1:{PORT}/api/health"):
         print("[server] 后端启动超时")
-        input("\n按 Enter 退出...")
+        time.sleep(5)
         sys.exit(1)
     print("[server] 后端就绪")
 
@@ -97,7 +97,7 @@ if __name__ == "__main__":
         print("[ngrok] 获取公网地址失败")
         print("[ngrok] 请确认已安装 ngrok 并配置 ngrok authtoken")
         ngrok_proc.terminate()
-        input("\n按 Enter 退出...")
+        time.sleep(5)
         sys.exit(1)
 
     with open(backend_dir / ".ngrok_url", "w") as f:
@@ -113,7 +113,10 @@ if __name__ == "__main__":
     print()
     print("  将此地址发给朋友即可加入对战")
     print()
-    input("  按 Enter 键停止所有服务...")
+    try:
+        input("  按 Enter 键停止所有服务...")
+    except (EOFError, RuntimeError):
+        time.sleep(3600)
 
     ngrok_proc.terminate()
     try:
