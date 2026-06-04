@@ -170,7 +170,7 @@ function switchTab(t) {
   tab.value = t
   message.value = ''
   if (t === 'users') { stopLogPolling(); if (users.value.length === 0) fetchUsers() }
-  if (t === 'rooms') { stopLogPolling(); if (rooms.value.length === 0) fetchRooms() }
+  if (t === 'rooms') { stopLogPolling(); fetchRooms() }
   if (t === 'logs') { startLogPolling() }
 }
 

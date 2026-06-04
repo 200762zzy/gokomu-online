@@ -44,11 +44,18 @@ function onAnimationEnd() {
 .tier-2 { color: #cd7f32; background: rgba(205,127,50,0.12); }
 .tier-3 { color: #c0c0c0; background: rgba(192,192,192,0.12); }
 .tier-4 { color: #ffd700; background: rgba(255,215,0,0.12); }
-.tier-5 { color: #00ffff; background: rgba(0,255,255,0.08); }
-.tier-6 { color: #ff6b35; background: rgba(255,107,53,0.12); }
-.tier-7 {
+.tier-5 { color: #e5e4e2; background: rgba(229,228,226,0.10); }
+.tier-6 { color: #00ffff; background: rgba(0,255,255,0.08); }
+.tier-7 { color: #ff6b35; background: rgba(255,107,53,0.12); }
+.tier-8 { color: #b44dff; background: rgba(180,77,255,0.12); }
+.tier-9 {
   color: #ff0080;
   background: linear-gradient(135deg, rgba(255,0,128,0.12), rgba(255,215,0,0.12));
+}
+.tier-10 {
+  color: #ffd700;
+  background: linear-gradient(135deg, rgba(255,215,0,0.15), rgba(255,255,255,0.08));
+  text-shadow: 0 0 8px rgba(255,215,0,0.4);
 }
 
 /* Entrance animations */
@@ -60,9 +67,12 @@ function onAnimationEnd() {
 .tier-2.animating { animation-name: glowIn; }
 .tier-3.animating { animation-name: shimmerIn; }
 .tier-4.animating { animation-name: goldPulse; }
-.tier-5.animating { animation-name: sparkleIn; }
-.tier-6.animating { animation-name: flameIn; }
-.tier-7.animating { animation-name: rainbowIn; }
+.tier-5.animating { animation-name: platinaShine; }
+.tier-6.animating { animation-name: sparkleIn; }
+.tier-7.animating { animation-name: flameIn; }
+.tier-8.animating { animation-name: royalRise; }
+.tier-9.animating { animation-name: trophyReveal; }
+.tier-10.animating { animation-name: legendaryBurst; }
 
 @keyframes fadeIn {
   0% { opacity: 0; transform: scale(0.8); }
@@ -83,6 +93,11 @@ function onAnimationEnd() {
   40% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 20px 4px rgba(255,215,0,0.6); }
   100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(255,215,0,0); }
 }
+@keyframes platinaShine {
+  0% { opacity: 0; transform: scale(0.6); filter: brightness(0.5); }
+  40% { opacity: 1; transform: scale(1.1); filter: brightness(1.5); box-shadow: 0 0 25px 5px rgba(229,228,226,0.5); }
+  100% { opacity: 1; transform: scale(1); filter: brightness(1); box-shadow: 0 0 0 0 rgba(229,228,226,0); }
+}
 @keyframes sparkleIn {
   0% { opacity: 0; transform: rotateY(90deg); }
   50% { opacity: 1; transform: rotateY(0); box-shadow: 0 0 20px 4px rgba(0,255,255,0.5); }
@@ -93,10 +108,23 @@ function onAnimationEnd() {
   30% { opacity: 1; transform: scale(1.2); box-shadow: 0 0 30px 6px rgba(255,107,53,0.6); }
   100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(255,107,53,0); }
 }
-@keyframes rainbowIn {
-  0% { opacity: 0; transform: scale(0.3) rotate(-10deg); filter: hue-rotate(0deg); }
-  40% { opacity: 1; transform: scale(1.2) rotate(3deg); filter: hue-rotate(180deg); }
-  70% { box-shadow: 0 0 40px 8px rgba(255,0,128,0.6); }
-  100% { opacity: 1; transform: scale(1) rotate(0); filter: hue-rotate(360deg); box-shadow: 0 0 0 0 rgba(255,0,128,0); }
+@keyframes royalRise {
+  0% { opacity: 0; transform: translateY(30px) scale(0.5); }
+  30% { opacity: 1; transform: translateY(-5px) scale(1.1); box-shadow: 0 0 30px 6px rgba(180,77,255,0.5); }
+  60% { transform: translateY(2px) scale(1); }
+  100% { opacity: 1; transform: translateY(0) scale(1); box-shadow: 0 0 0 0 rgba(180,77,255,0); }
+}
+@keyframes trophyReveal {
+  0% { opacity: 0; transform: scale(0) rotate(-180deg); }
+  30% { opacity: 1; transform: scale(1.3) rotate(10deg); box-shadow: 0 0 40px 8px rgba(255,0,128,0.6); }
+  60% { transform: scale(0.95) rotate(-3deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); box-shadow: 0 0 0 0 rgba(255,0,128,0); }
+}
+@keyframes legendaryBurst {
+  0% { opacity: 0; transform: scale(0); filter: hue-rotate(0deg); }
+  20% { opacity: 1; transform: scale(1.4); filter: hue-rotate(120deg); box-shadow: 0 0 60px 12px rgba(255,215,0,0.8); }
+  50% { transform: scale(0.9); filter: hue-rotate(240deg); }
+  80% { transform: scale(1.05); box-shadow: 0 0 30px 6px rgba(255,215,0,0.4); }
+  100% { opacity: 1; transform: scale(1); filter: hue-rotate(360deg); box-shadow: 0 0 0 0 rgba(255,215,0,0); }
 }
 </style>

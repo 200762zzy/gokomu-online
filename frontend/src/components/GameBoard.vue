@@ -10,9 +10,10 @@ const props = defineProps({
   lastMove: Object,
   boardImage: String,
   parentWidth: { type: Number, default: 0 },
+  previewPos: Object,
 })
 
-const emit = defineEmits(['placeStone'])
+const emit = defineEmits(['placeStone', 'confirmPlace', 'cancelPlace'])
 
 const BOARD_SIZE = 15
 
@@ -27,6 +28,7 @@ const canvasSize = computed(() => CELL_SIZE.value * (BOARD_SIZE - 1) + MARGIN * 
 
 const canvasRef = ref(null)
 let boardImageCache = null
+let _widgetBounds = null
 
 function loadBoardImage(url) {
   if (!url) { boardImageCache = null; return }
@@ -111,6 +113,98 @@ function drawBoard() {
     }
   }
 
+  if (props.previewPos) {
+    const px = margin + props.previewPos.col * cell
+    const py = margin + props.previewPos.row * cell
+    const radius = cell / 2 - 2
+    ctx.save()
+    ctx.globalAlpha = 0.4
+    ctx.beginPath()
+    ctx.arc(px, py, radius, 0, Math.PI * 2)
+    const grad = ctx.createRadialGradient(px - 4, py - 4, 2, px, py, radius)
+    grad.addColorStop(0, '#888')
+    grad.addColorStop(1, '#444')
+    ctx.fillStyle = grad
+    ctx.fill()
+    ctx.restore()
+
+    const isMobile = props.parentWidth > 0
+    const bw = isMobile ? 80 : 56
+    const bh = isMobile ? 40 : 28
+    const btnW = isMobile ? 30 : 20
+    const gap = isMobile ? 5 : 4
+    const wx = px - bw / 2
+    let wy = py - cell / 2 - bh - 4
+    if (wy < margin) {
+      wy = py + cell / 2 + 4
+    }
+
+    ctx.save()
+    ctx.fillStyle = 'rgba(22, 33, 62, 0.95)'
+    ctx.beginPath()
+    const r2 = 6
+    ctx.moveTo(wx + r2, wy)
+    ctx.lineTo(wx + bw - r2, wy)
+    ctx.arcTo(wx + bw, wy, wx + bw, wy + r2, r2)
+    ctx.lineTo(wx + bw, wy + bh - r2)
+    ctx.arcTo(wx + bw, wy + bh, wx + bw - r2, wy + bh, r2)
+    ctx.lineTo(wx + r2, wy + bh)
+    ctx.arcTo(wx, wy + bh, wx, wy + bh - r2, r2)
+    ctx.lineTo(wx, wy + r2)
+    ctx.arcTo(wx, wy, wx + r2, wy, r2)
+    ctx.closePath()
+    ctx.fill()
+
+    const confirmX = wx + gap
+    const confirmY = wy + gap
+    const confirmW = btnW
+    const confirmH = bh - gap * 2
+    ctx.fillStyle = '#28a745'
+    ctx.beginPath()
+    const b1r = 4
+    ctx.moveTo(confirmX + b1r, confirmY)
+    ctx.lineTo(confirmX + confirmW - b1r, confirmY)
+    ctx.arcTo(confirmX + confirmW, confirmY, confirmX + confirmW, confirmY + b1r, b1r)
+    ctx.lineTo(confirmX + confirmW, confirmY + confirmH - b1r)
+    ctx.arcTo(confirmX + confirmW, confirmY + confirmH, confirmX + confirmW - b1r, confirmY + confirmH, b1r)
+    ctx.lineTo(confirmX + b1r, confirmY + confirmH)
+    ctx.arcTo(confirmX, confirmY + confirmH, confirmX, confirmY + confirmH - b1r, b1r)
+    ctx.lineTo(confirmX, confirmY + b1r)
+    ctx.arcTo(confirmX, confirmY, confirmX + b1r, confirmY, b1r)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.font = 'bold ' + (isMobile ? 20 : 14) + 'px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('✓', confirmX + confirmW / 2, confirmY + confirmH / 2)
+
+    const cancelX = wx + gap * 2 + btnW
+    const cancelY = wy + gap
+    const cancelW = btnW
+    const cancelH = bh - gap * 2
+    ctx.fillStyle = '#dc3545'
+    ctx.beginPath()
+    ctx.moveTo(cancelX + b1r, cancelY)
+    ctx.lineTo(cancelX + cancelW - b1r, cancelY)
+    ctx.arcTo(cancelX + cancelW, cancelY, cancelX + cancelW, cancelY + b1r, b1r)
+    ctx.lineTo(cancelX + cancelW, cancelY + cancelH - b1r)
+    ctx.arcTo(cancelX + cancelW, cancelY + cancelH, cancelX + cancelW - b1r, cancelY + cancelH, b1r)
+    ctx.lineTo(cancelX + b1r, cancelY + cancelH)
+    ctx.arcTo(cancelX, cancelY + cancelH, cancelX, cancelY + cancelH - b1r, b1r)
+    ctx.lineTo(cancelX, cancelY + b1r)
+    ctx.arcTo(cancelX, cancelY, cancelX + b1r, cancelY, b1r)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.fillText('✗', cancelX + cancelW / 2, cancelY + cancelH / 2)
+    ctx.restore()
+
+    _widgetBounds = { x: wx, y: wy, w: bw, h: bh, confirmX, confirmY, confirmW, confirmH }
+  } else {
+    _widgetBounds = null
+  }
+
   ctx.fillStyle = '#6b4f1a'
   ctx.font = Math.max(9, cell * 0.3) + 'px sans-serif'
   ctx.textAlign = 'center'
@@ -185,30 +279,52 @@ function drawBoard() {
   }
 }
 
-function getBoardPos(clientX, clientY) {
+function clientToCanvas(clientX, clientY) {
   const canvas = canvasRef.value
   const rect = canvas.getBoundingClientRect()
   const scaleX = canvasSize.value / rect.width
   const scaleY = canvasSize.value / rect.height
-  const x = (clientX - rect.left) * scaleX
-  const y = (clientY - rect.top) * scaleY
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY,
+  }
+}
+
+function getBoardPos(clientX, clientY) {
+  const { x, y } = clientToCanvas(clientX, clientY)
   const col = Math.round((x - MARGIN) / CELL_SIZE.value)
   const row = Math.round((y - MARGIN) / CELL_SIZE.value)
   if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null
   return { row, col }
 }
 
+function hitTestWidget(clientX, clientY) {
+  if (!_widgetBounds) return null
+  const { x, y } = clientToCanvas(clientX, clientY)
+  const b = _widgetBounds
+  if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) return null
+  if (x >= b.confirmX && x <= b.confirmX + b.confirmW &&
+      y >= b.confirmY && y <= b.confirmY + b.confirmH) return 'confirm'
+  return 'cancel'
+}
+
 function handleClick(event) {
+  const widget = hitTestWidget(event.clientX, event.clientY)
+  if (widget === 'confirm') { emit('confirmPlace'); return }
+  if (widget === 'cancel') { emit('cancelPlace'); return }
   if (props.gameOver || props.readonly) return
   const pos = getBoardPos(event.clientX, event.clientY)
   if (pos) emit('placeStone', pos)
 }
 
 function handleTouch(event) {
-  if (props.gameOver || props.readonly) return
-  event.preventDefault()
   const touch = event.touches[0]
   if (!touch) return
+  const widget = hitTestWidget(touch.clientX, touch.clientY)
+  if (widget === 'confirm') { emit('confirmPlace'); return }
+  if (widget === 'cancel') { emit('cancelPlace'); return }
+  if (props.gameOver || props.readonly) return
+  event.preventDefault()
   const pos = getBoardPos(touch.clientX, touch.clientY)
   if (pos) emit('placeStone', pos)
 }
@@ -220,6 +336,7 @@ onMounted(() => {
 watch(() => props.board, drawBoard, { deep: true })
 watch(() => props.replayLabel, drawBoard, { deep: true })
 watch(() => props.boardImage, (url) => { loadBoardImage(url); drawBoard() })
+watch(() => props.previewPos, drawBoard)
 watch(canvasSize, drawBoard)
 </script>
 

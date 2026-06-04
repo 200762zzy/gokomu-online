@@ -1,11 +1,13 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from './stores/auth.js'
 import { audioManager } from './services/audioManager.js'
 import { useIsMobile } from './composables/useIsMobile.js'
+import { useActiveRoom } from './composables/useActiveRoom.js'
 import BottomTabBar from './components/BottomTabBar.vue'
 import HamburgerDrawer from './components/HamburgerDrawer.vue'
+import ChangelogModal from './components/ChangelogModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,15 +15,74 @@ const authStore = useAuthStore()
 
 const { isMobile } = useIsMobile()
 const showDrawer = ref(false)
+const { activeRoom } = useActiveRoom()
+const roomDismissed = ref(sessionStorage.getItem('_room_dismissed') === '1')
+
+const isOnGamePage = computed(() => {
+  if (!activeRoom.value) return false
+  const path = route.path
+  const { game_type, room_id } = activeRoom.value
+  if (game_type === 'gomoku' && path === `/game/${room_id}`) return true
+  if (game_type === 'cc' && path === `/chess/game/${room_id}`) return true
+  if (game_type === 'ludo' && path === `/ludo/game/${room_id}`) return true
+  return false
+})
+
+const showBanner = computed(() => {
+  return activeRoom.value && !isOnGamePage.value && !roomDismissed.value
+})
+
+const gameTypeLabel = computed(() => {
+  const map = { gomoku: '五子棋', cc: '中国象棋', ludo: '飞行棋' }
+  return map[activeRoom.value?.game_type] || ''
+})
+
+const gameTypeRoute = computed(() => {
+  const map = { gomoku: '/game', cc: '/chess/game', ludo: '/ludo/game' }
+  return map[activeRoom.value?.game_type] || ''
+})
+
+function dismissRoomBanner() {
+  roomDismissed.value = true
+  sessionStorage.setItem('_room_dismissed', '1')
+}
+
+function goToRoom() {
+  if (!activeRoom.value) return
+  router.push(`${gameTypeRoute.value}/${activeRoom.value.room_id}`)
+}
+
+watch(() => route.path, () => {
+  if (isOnGamePage.value) {
+    roomDismissed.value = false
+    sessionStorage.removeItem('_room_dismissed')
+  }
+})
 
 const showApiDialog = ref(false)
+const showChangelog = ref(false)
 const apiKeyInput = ref(localStorage.getItem('deepseek_api_key') || '')
 const bgmEnabled = ref(true)
 const bgmVolume = ref(0.3)
+const sfxVolume = ref(0.5)
 const showVolumePanel = ref(false)
+
+onMounted(() => {
+  audioManager.playBGM()
+})
+
+watch(() => route.path, (path) => {
+  if (path.startsWith('/chess')) {
+    audioManager.gameType = 'chess'
+  } else if (path.startsWith('/game') || path.startsWith('/local') || path.startsWith('/ai')) {
+    audioManager.gameType = 'gomoku'
+  }
+})
 const navItems = [
   { path: '/', label: '首页', icon: '🏠' },
-  { path: '/lobby', label: '大厅', icon: '🎮', auth: true },
+  { path: '/lobby', label: '五子棋', icon: '⚫', auth: true },
+  { path: '/chess/local', label: '象棋·本地', icon: '♜' },
+  { path: '/chess/lobby', label: '象棋·在线', icon: '♞', auth: true },
   { path: '/friends', label: '好友', icon: '👥', auth: true },
   { path: '/leaderboard', label: '排行榜', icon: '🏆' },
   { path: '/history', label: '对局记录', icon: '📋', auth: true },
@@ -37,6 +98,11 @@ function toggleBGM() {
 function setVolume(v) {
   bgmVolume.value = v
   audioManager.setBGMVolume(v)
+}
+
+function setSFXVolume(v) {
+  sfxVolume.value = v
+  audioManager.setSFXVolume(v)
 }
 
 function toggleVolumePanel(e) {
@@ -68,7 +134,7 @@ function onDocumentClick() {
   showVolumePanel.value = false
 }
 
-import { onMounted, onUnmounted } from 'vue'
+import { onUnmounted } from 'vue'
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
 })
@@ -82,7 +148,7 @@ onUnmounted(() => {
   <div class="app-layout">
     <aside v-if="!isMobile" class="sidebar">
       <div class="sidebar-header">
-        <h1 class="logo" @click="router.push('/')">五子棋</h1>
+        <h1 class="logo" @click="router.push('/')">弈棋</h1>
       </div>
       <nav class="sidebar-nav">
         <router-link
@@ -104,9 +170,17 @@ onUnmounted(() => {
           </button>
           <button class="btn-icon" @click="toggleVolumePanel" title="音量">🎚️</button>
           <div v-if="showVolumePanel" class="volume-panel" @click.stop>
-            <input type="range" min="0" max="1" step="0.01" :value="bgmVolume" @input="setVolume(parseFloat($event.target.value))" class="volume-slider" />
+            <div class="volume-row">
+              <span class="volume-label">🎵 音乐</span>
+              <input type="range" min="0" max="1" step="0.01" :value="bgmVolume" @input="setVolume(parseFloat($event.target.value))" class="volume-slider" />
+            </div>
+            <div class="volume-row">
+              <span class="volume-label">🔊 音效</span>
+              <input type="range" min="0" max="1" step="0.01" :value="sfxVolume" @input="setSFXVolume(parseFloat($event.target.value))" class="volume-slider" />
+            </div>
           </div>
         </div>
+        <button class="btn-icon" @click="showChangelog = true" title="更新日志">📋</button>
         <button class="btn-icon" @click="openApiDialog" title="API Key">🔑</button>
         <template v-if="authStore.isAuthenticated">
           <span class="user-badge" @click="router.push('/profile')">
@@ -118,6 +192,12 @@ onUnmounted(() => {
       </div>
     </aside>
 
+    <div v-if="showBanner" class="room-banner" @click="goToRoom">
+      <span class="room-banner-icon">⏳</span>
+      <span class="room-banner-text">你有一个进行中的 <strong>{{ gameTypeLabel }}</strong> 房间 <strong>#{{ activeRoom.room_id }}</strong></span>
+      <span class="room-banner-action">返回继续</span>
+      <button class="room-banner-close" @click.stop="dismissRoomBanner">✕</button>
+    </div>
     <main class="main-content" :class="{ 'is-mobile': isMobile }">
       <router-view />
     </main>
@@ -125,6 +205,8 @@ onUnmounted(() => {
 
   <BottomTabBar v-if="isMobile" @open-menu="showDrawer = true" />
   <HamburgerDrawer :show="isMobile && showDrawer" @close="showDrawer = false" />
+
+  <ChangelogModal :show="showChangelog" @close="showChangelog = false" />
 
   <Teleport to="body">
     <div v-if="showApiDialog" class="overlay" @click.self="showApiDialog = false">
@@ -270,6 +352,21 @@ body {
   margin-bottom: 4px;
 }
 
+.volume-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.volume-row + .volume-row {
+  margin-top: 6px;
+}
+.volume-label {
+  font-size: 0.75rem;
+  color: #aaa;
+  min-width: 3em;
+}
+
 .volume-slider {
   width: 100px;
   height: 4px;
@@ -408,4 +505,88 @@ body {
   background: #6c757d;
 }
 .btn-reject:hover { opacity: 0.9; }
+
+.room-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, rgba(230,126,34,0.92), rgba(243,156,18,0.88));
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  white-space: nowrap;
+  transition: opacity 0.2s;
+  backdrop-filter: blur(4px);
+}
+.room-banner:hover {
+  opacity: 0.95;
+}
+.room-banner-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.room-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-banner-text strong {
+  font-weight: 700;
+}
+.room-banner-action {
+  padding: 4px 14px;
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.room-banner-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.6);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.room-banner-close:hover {
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+}
+
+/* Background ambient animation */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(118, 75, 162, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(231, 76, 60, 0.04) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: -1;
+  animation: ambientShift 12s ease-in-out infinite alternate;
+}
+
+@keyframes ambientShift {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(-10px, 8px) scale(1.02); }
+  100% { transform: translate(10px, -8px) scale(0.98); }
+}
+
 </style>

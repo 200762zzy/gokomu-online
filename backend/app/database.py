@@ -34,4 +34,8 @@ async def init_db():
                 sync_conn.execute(text("ALTER TABLE users ADD COLUMN board_image VARCHAR(512) NOT NULL DEFAULT ''"))
             if "background_image" not in columns:
                 sync_conn.execute(text("ALTER TABLE users ADD COLUMN background_image VARCHAR(512) NOT NULL DEFAULT ''"))
+            gc_columns = [c["name"] for c in inspector.get_columns("game_records")]
+            if "game_type" not in gc_columns:
+                sync_conn.execute(text("ALTER TABLE game_records ADD COLUMN game_type VARCHAR(16) NOT NULL DEFAULT 'gomoku'"))
+                sync_conn.execute(text("CREATE INDEX ix_game_records_game_type ON game_records (game_type)"))
         await conn.run_sync(_migrate)

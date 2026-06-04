@@ -140,23 +140,48 @@ async def delete_user(
 
 @router.get("/rooms")
 async def list_admin_rooms(admin: User = Depends(require_admin)):
-    rooms = room_manager.list_all_rooms()
-    return {
-        "rooms": [
-            {
-                "room_id": r.id,
-                "player_count": r.player_count,
-                "spectator_count": len(r.spectators),
-                "players": [
-                    {"user_id": p.user_id, "username": p.name}
-                    for p in r.players.values()
-                    if p
-                ],
-                "is_gaming": not r.game_over and r.player_count == 2,
-            }
-            for r in rooms
-        ]
-    }
+    from ..chinese_chess.room_manager import cc_room_manager
+    from ..ludo.room_manager import manager as ludo_manager
+
+    all_rooms = []
+
+    for r in room_manager.list_all_rooms():
+        all_rooms.append({
+            "room_id": r.id, "game_type": "gomoku",
+            "player_count": r.player_count,
+            "spectator_count": len(r.spectators),
+            "players": [
+                {"user_id": p.user_id, "username": p.name}
+                for p in r.players.values() if p
+            ],
+            "is_gaming": not r.game_over and r.is_full,
+        })
+
+    for r in cc_room_manager.rooms.values():
+        all_rooms.append({
+            "room_id": r.id, "game_type": "chinese_chess",
+            "player_count": r.player_count,
+            "spectator_count": len(getattr(r, "spectators", [])),
+            "players": [
+                {"username": r.red_name},
+                *([{"username": r.black_name}] if r.black_name else []),
+            ],
+            "is_gaming": not r.game_over and r.is_full,
+        })
+
+    for r in ludo_manager.rooms.values():
+        all_rooms.append({
+            "room_id": r.id, "game_type": "ludo",
+            "player_count": r.player_count(),
+            "spectator_count": 0,
+            "players": [
+                {"username": p.name}
+                for p in r.players if p
+            ],
+            "is_gaming": not r.state["game_over"] and r.is_full(),
+        })
+
+    return {"rooms": all_rooms}
 
 
 @router.post("/close-room")

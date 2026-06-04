@@ -17,8 +17,8 @@ echo [2/3] Installing PyInstaller...
 pip install pyinstaller -q
 
 echo [3/3] Packing backend into EXE...
-:: Clean previous dist output
-if exist "%~dp0dist\GomokuOnline" rmdir /s /q "%~dp0dist\GomokuOnline"
+:: Clean previous exe
+if exist "%~dp0GomokuOnline.exe" del /q "%~dp0GomokuOnline.exe"
 cd /d "%~dp0backend"
 pyinstaller --onefile --name GomokuOnline run.py ^
   --add-data "..\frontend\dist;frontend_dist" ^
@@ -28,20 +28,21 @@ pyinstaller --onefile --name GomokuOnline run.py ^
   --hidden-import uvicorn.protocols.http.auto ^
   --hidden-import uvicorn.protocols.websockets.auto ^
   --hidden-import httpx ^
-  --distpath "..\dist\GomokuOnline" ^
-  --noconsole
+  --hidden-import aiosqlite ^
+  --distpath ".." ^
+  REM --noconsole
 
 cd /d "%~dp0"
-if exist "dist\GomokuOnline\GomokuOnline.exe" (
+if exist "GomokuOnline.exe" (
     :: Clean up PyInstaller build artifacts
     if exist "backend\build" rmdir /s /q "backend\build"
     if exist "backend\GomokuOnline.spec" del /q "backend\GomokuOnline.spec"
 
     echo.
     echo ============================================
-    echo   Done! Single EXE at: dist\GomokuOnline\GomokuOnline.exe
+    echo   Done! Single EXE at: %~dp0GomokuOnline.exe
     echo ============================================
-    dir "dist\GomokuOnline\GomokuOnline.exe"
+    dir GomokuOnline.exe
 ) else (
     echo [ERROR] Build failed!
 )

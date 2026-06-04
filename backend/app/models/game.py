@@ -9,6 +9,7 @@ class GameRecord(Base):
     __tablename__ = "game_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_type: Mapped[str] = mapped_column(String(16), nullable=False, default="gomoku", index=True)
     black_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     white_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     winner: Mapped[str | None] = mapped_column(String(8), nullable=True)

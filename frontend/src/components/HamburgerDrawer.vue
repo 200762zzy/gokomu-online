@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { audioManager } from '../services/audioManager.js'
+import ChangelogModal from './ChangelogModal.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -16,7 +17,9 @@ const authStore = useAuthStore()
 const apiKeyInput = ref(localStorage.getItem('deepseek_api_key') || '')
 const bgmEnabled = ref(true)
 const bgmVolume = ref(0.3)
+const sfxVolume = ref(0.5)
 const showApiDialog = ref(false)
+const showChangelog = ref(false)
 
 function navigate(path) {
   emit('close')
@@ -31,6 +34,11 @@ function toggleBGM() {
 function setVolume(v) {
   bgmVolume.value = v
   audioManager.setBGMVolume(v)
+}
+
+function setSFXVolume(v) {
+  sfxVolume.value = v
+  audioManager.setSFXVolume(v)
 }
 
 function saveApiKey() {
@@ -87,17 +95,35 @@ function handleLogout() {
 
           <div class="menu-divider"></div>
 
-          <div class="menu-item audio-row">
-            <button class="menu-btn-icon" @click="toggleBGM">
-              {{ bgmEnabled ? '🔊' : '🔇' }}
-            </button>
-            <input
-              type="range" min="0" max="1" step="0.01"
-              :value="bgmVolume"
-              @input="setVolume(parseFloat($event.target.value))"
-              class="volume-slider"
-            />
+          <div class="audio-section">
+            <div class="menu-item audio-row">
+              <button class="menu-btn-icon" @click="toggleBGM">
+                {{ bgmEnabled ? '🔊' : '🔇' }}
+              </button>
+              <input
+                type="range" min="0" max="1" step="0.01"
+                :value="bgmVolume"
+                @input="setVolume(parseFloat($event.target.value))"
+                class="volume-slider"
+              />
+              <span class="vol-label">音乐</span>
+            </div>
+            <div class="menu-item audio-row">
+              <span class="menu-btn-icon" style="visibility:hidden">🔊</span>
+              <input
+                type="range" min="0" max="1" step="0.01"
+                :value="sfxVolume"
+                @input="setSFXVolume(parseFloat($event.target.value))"
+                class="volume-slider"
+              />
+              <span class="vol-label">音效</span>
+            </div>
           </div>
+
+          <button class="menu-item" @click="showChangelog = true">
+            <span class="menu-icon">📋</span>
+            <span class="menu-label">更新日志</span>
+          </button>
 
           <button class="menu-item" @click="showApiDialog = true">
             <span class="menu-icon">🔑</span>
@@ -123,6 +149,8 @@ function handleLogout() {
         </div>
       </div>
     </div>
+
+    <ChangelogModal :show="showChangelog" @close="showChangelog = false" />
 
     <div v-if="showApiDialog" class="overlay" @click.self="showApiDialog = false">
       <div class="dialog">
@@ -241,11 +269,21 @@ function handleLogout() {
   margin: 8px 16px;
 }
 
+.audio-section {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding-top: 4px;
+}
 .audio-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 6px 16px;
+}
+.vol-label {
+  font-size: 0.75rem;
+  color: #888;
+  min-width: 2.5em;
+  text-align: right;
 }
 
 .menu-btn-icon {

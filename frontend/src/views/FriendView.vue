@@ -73,8 +73,20 @@ function switchTab(t) {
   if (t === 'list') friendStore.fetchFriends()
 }
 
-function inviteToRoom(friendId) {
-  const roomId = gameStore.currentRoomId
+async function inviteToRoom(friendId) {
+  let roomId = gameStore.currentRoomId
+  if (!roomId) {
+    try {
+      const token = localStorage.getItem('access_token')
+      const resp = await fetch('/api/my-active-room', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.game_type) roomId = data.room_id
+      }
+    } catch {}
+  }
   if (!roomId) {
     sendMsg.value = '你当前不在房间中'
     setTimeout(() => { sendMsg.value = '' }, 3000)

@@ -32,10 +32,11 @@ async def get_current_user(
 async def get_game_history(
     page: int = 1,
     limit: int = 20,
+    game_type: str | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    records, total = await get_user_games(db, current_user.id, page, limit)
+    records, total = await get_user_games(db, current_user.id, page, limit, game_type)
     games = []
     for r in records:
         games.append(GameRecordResponse(
@@ -49,6 +50,7 @@ async def get_game_history(
             white_elo_change=r.white_elo_change,
             started_at=str(r.started_at),
             ended_at=str(r.ended_at) if r.ended_at else None,
+            game_type=r.game_type if hasattr(r, 'game_type') else 'gomoku',
         ))
     return GameHistoryResponse(games=games, total=total, page=page)
 

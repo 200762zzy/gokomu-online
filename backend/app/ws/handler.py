@@ -191,6 +191,7 @@ async def handle_websocket(ws: WebSocket):
                     "your_title": get_title(user.elo).model_dump(),
                     "opponent_title": get_title(pending_room.black_elo if pending_color == "white" else (pending_room.white_elo or 1000)).model_dump(),
                 })
+                await send_msg(ws, {"type": "auth_ok", "user_id": user.id, "username": user.username})
                 await broadcast(pending_room, {
                     "type": "opponent_reconnected",
                     "player": user.username,
@@ -227,13 +228,29 @@ async def handle_websocket(ws: WebSocket):
             if current_room is None and user:
                 found_room, found_color = room_manager.find_room_by_user_id(user.id)
                 if found_room:
-                    current_room = found_room
-                    current_color = found_color
+                    player = found_room.players.get(found_color)
+                    if player and not player.disconnected:
+                        current_room = found_room
+                        current_color = found_color
 
             if msg_type == "create_room":
                 if current_room:
-                    await send_msg(ws, {"type": "error", "message": "你已在房间中"})
-                    continue
+                    is_active = (
+                        not current_room.game_over
+                        and len(current_room.move_history) > 0
+                        and current_room.is_full
+                    )
+                    if is_active:
+                        await send_msg(ws, {"type": "error", "message": "你已在房间中"})
+                        continue
+                    if current_room.player_count <= 1:
+                        if current_room.timer_task:
+                            current_room.timer_task.cancel()
+                        room_manager.remove_room(current_room.id)
+                    else:
+                        current_room.players[current_color] = None
+                    current_room = None
+                    current_color = None
                 name = data.get("player_name", user.username)
                 password = data.get("password", "")
                 initial_time = data.get("initial_time_ms", 1800000)
@@ -260,8 +277,22 @@ async def handle_websocket(ws: WebSocket):
 
             elif msg_type == "join_room":
                 if current_room:
-                    await send_msg(ws, {"type": "error", "message": "你已在房间中"})
-                    continue
+                    is_active = (
+                        not current_room.game_over
+                        and len(current_room.move_history) > 0
+                        and current_room.is_full
+                    )
+                    if is_active:
+                        await send_msg(ws, {"type": "error", "message": "你已在房间中"})
+                        continue
+                    if current_room.player_count <= 1:
+                        if current_room.timer_task:
+                            current_room.timer_task.cancel()
+                        room_manager.remove_room(current_room.id)
+                    else:
+                        current_room.players[current_color] = None
+                    current_room = None
+                    current_color = None
                 room_id = data.get("room_id", "")
                 name = data.get("player_name", user.username)
                 password = data.get("password", "")
@@ -490,8 +521,22 @@ async def handle_websocket(ws: WebSocket):
 
             elif msg_type == "start_match":
                 if current_room:
-                    await send_msg(ws, {"type": "error", "message": "你已在房间中"})
-                    continue
+                    is_active = (
+                        not current_room.game_over
+                        and len(current_room.move_history) > 0
+                        and current_room.is_full
+                    )
+                    if is_active:
+                        await send_msg(ws, {"type": "error", "message": "你已在房间中"})
+                        continue
+                    if current_room.player_count <= 1:
+                        if current_room.timer_task:
+                            current_room.timer_task.cancel()
+                        room_manager.remove_room(current_room.id)
+                    else:
+                        current_room.players[current_color] = None
+                    current_room = None
+                    current_color = None
                 if matchmaker.is_in_queue(ws_id):
                     await send_msg(ws, {"type": "error", "message": "已在匹配队列中"})
                     continue
@@ -541,27 +586,65 @@ async def handle_websocket(ws: WebSocket):
                 })
                 _broadcast_spectator_count(target_room)
 
+            elif msg_type == "sync":
+                if not current_room:
+                    await send_msg(ws, {"type": "error", "message": "不在房间中"})
+                    continue
+                opponent_color = current_room.get_opponent_color(current_color)
+                opponent = current_room.players[opponent_color]
+                opp_name = opponent.name if opponent else None
+                opp_elo = current_room.black_elo if current_color == "white" else (current_room.white_elo or 1000)
+                your_turn = current_room.current_turn == (game.BLACK if current_color == "black" else game.WHITE)
+                await send_msg(ws, {
+                    "type": "sync_room",
+                    "opponent_name": opp_name or "等待对手加入...",
+                    "opponent_title": get_title(opp_elo).model_dump() if opp_name else None,
+                    "board": _board_for_api(current_room.board),
+                    "current_turn": _color_name(current_room.current_turn),
+                    "your_turn": your_turn,
+                    "move_history": current_room.move_history,
+                    "black_time": current_room.black_time_remaining,
+                    "white_time": current_room.white_time_remaining,
+                })
+
             elif msg_type == "invite_to_room":
                 to_user_id = data.get("to_user_id")
-                room_id = data.get("room_id", "")
-                if not to_user_id or not room_id:
+                if not to_user_id:
                     await send_msg(ws, {"type": "error", "message": "参数不完整"})
                     continue
                 target_ws = await _get_global_ws(to_user_id)
                 if not target_ws:
                     await send_msg(ws, {"type": "error", "message": "对方不在线"})
                     continue
-                if not current_room or current_room.id != room_id:
-                    await send_msg(ws, {"type": "error", "message": "你不在该房间中"})
+                # Find the user's active room across all game types
+                room = current_room
+                if not room:
+                    from ..chinese_chess.room_manager import cc_room_manager
+                    from ..ludo.room_manager import manager as ludo_manager
+                    room, _ = room_manager.find_room_by_user_id(user.id)
+                    if not room:
+                        room, _ = cc_room_manager.find_room_by_user_id(user.id)
+                    if not room:
+                        room, _ = ludo_manager.find_room_by_user_id(user.id)
+                room_id = data.get("room_id", room.id if room else "")
+                if not room or (data.get("room_id") and room.id != data.get("room_id")):
+                    await send_msg(ws, {"type": "error", "message": "你不在房间中"})
                     continue
+                # Build invitation info (Gomoku/CC/Ludo rooms may differ)
+                black_name = getattr(room, "black_name", None) or getattr(room, "red_name", None) or ""
+                white_name = getattr(room, "white_name", None) or getattr(room, "black_name", None) or ""
+                if hasattr(room, 'is_full'):
+                    is_full = room.is_full if not callable(room.is_full) else room.is_full()
+                else:
+                    is_full = room.is_full()
                 await send_msg(target_ws, {
                     "type": "room_invitation",
                     "from_user_id": user.id,
                     "from_username": user.username,
-                    "room_id": room_id,
-                    "black_name": current_room.black_name,
-                    "white_name": current_room.white_name,
-                    "game_in_progress": current_room.is_full and not current_room.game_over,
+                    "room_id": room.id,
+                    "black_name": black_name,
+                    "white_name": white_name,
+                    "game_in_progress": is_full and not room.game_over,
                 })
                 await send_msg(ws, {"type": "invite_sent", "to_user_id": to_user_id})
 
@@ -654,7 +737,7 @@ async def _handle_disconnect(room, color, ws, ws_id, is_spectator, user):
             _broadcast_spectator_count(room)
         else:
             player = room.players.get(color) if color else None
-            if player:
+            if player and player.ws == ws:
                 player.disconnected = True
                 player.ws = None
 
@@ -799,3 +882,20 @@ def _board_for_api(board):
 
 def _color_name(player: int) -> str:
     return "black" if player == game.BLACK else "white"
+
+
+# Public API for other modules (e.g., Chinese Chess) to participate in global connections
+async def register_global_connection(user_id: int, ws_id: int, ws: WebSocket):
+    await _set_global(user_id, ws_id, ws)
+
+
+async def unregister_global_connection(user_id: int, ws_id: int):
+    await _remove_global(user_id, ws_id)
+
+
+async def notify_friends_online(user_id: int, username: str):
+    await _notify_friends_online(user_id, username)
+
+
+async def notify_friends_offline(user_id: int):
+    await _notify_friends_offline(user_id)

@@ -10,7 +10,8 @@ const emit = defineEmits(['openMenu'])
 
 const tabs = [
   { path: '/', label: '首页', icon: '🏠', auth: false },
-  { path: '/lobby', label: '大厅', icon: '🎮', auth: true },
+  { path: '/lobby', label: '五子棋', icon: '⚫', auth: true },
+  { path: '/chess/lobby', label: '象棋', icon: '♞', auth: true },
   { path: '/leaderboard', label: '排行', icon: '🏆', auth: false },
   { path: '/friends', label: '好友', icon: '👥', auth: true },
 ]

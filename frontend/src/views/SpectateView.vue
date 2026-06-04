@@ -40,10 +40,16 @@ onMounted(() => {
 
   const unsubs = []
 
-  unsubs.push(wsClient.on('auth_ok', () => {
+  function doSpectate() {
     wsClient.send({ type: 'spectate_room', room_id: roomId })
     connected.value = true
-  }))
+  }
+
+  if (wsClient.isAuthenticated()) {
+    doSpectate()
+  } else {
+    unsubs.push(wsClient.on('auth_ok', doSpectate))
+  }
 
   unsubs.push(wsClient.on('spectate_joined', (msg) => {
     board.value = _parseBoard(msg.board)

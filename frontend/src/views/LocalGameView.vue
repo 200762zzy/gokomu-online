@@ -131,7 +131,7 @@ function handlePlaceStone({ row, col }) {
     }
   }
   placeStone(board.value, row, col, currentTurn.value)
-  audioManager.playStone()
+  audioManager.playGomokuStone()
 
   moveCount.value++
   moveHistory.value.push({ row, col, player: currentTurn.value })

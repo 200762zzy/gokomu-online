@@ -72,7 +72,7 @@ def get_ngrok_url(timeout: int = 20) -> str | None:
 
 
 def start_server():
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, ws_ping_interval=20, ws_ping_timeout=20)
 
 
 if __name__ == "__main__":

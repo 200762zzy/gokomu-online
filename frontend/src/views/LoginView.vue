@@ -46,7 +46,7 @@ function toggleMode() {
   <div class="login-container">
     <div class="login-card">
       <h2>{{ isRegister ? '注册' : '登录' }}</h2>
-      <p class="login-subtitle">五子棋在线对战平台</p>
+      <p class="login-subtitle">弈棋 - 五子棋 &amp; 中国象棋 在线平台</p>
 
       <form @submit.prevent="handleSubmit">
         <div class="form-group">

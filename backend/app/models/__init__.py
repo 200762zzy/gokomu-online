@@ -63,6 +63,7 @@ class TitleInfo(BaseModel):
     name: str
     tier: int
     icon: str
+    cssClass: str = ""
 
 
 # ===== Auth =====
@@ -124,6 +125,7 @@ class LeaderboardResponse(BaseModel):
 # ===== Game Records =====
 class GameRecordResponse(BaseModel):
     id: int
+    game_type: str = "gomoku"
     black_id: int
     white_id: int
     winner: str | None = None

@@ -40,15 +40,24 @@ const moveCount = ref(0)
 const blackMoveCount = ref(0)
 const whiteMoveCount = ref(0)
 const moveHistory = ref([])
-const opponentName = ref(gameStore.opponentName || '等待对手加入...')
+const opponentName = ref(
+  gameStore.opponentName && gameStore.opponentName !== '等待中...'
+    ? gameStore.opponentName
+    : '等待对手加入...'
+)
 const opponentTitle = ref(gameStore.opponentTitle || null)
-const showOpponentEntry = ref(!!gameStore.opponentTitle)
+const showOpponentEntry = ref(false)
+const entryPlayerName = ref('')
+const entryTier = ref(1)
 const analysis = ref(null)
 const analyzing = ref(false)
 const drawOfferBy = ref('')
 const undoOfferBy = ref('')
 const errorMsg = ref('')
-const waiting = computed(() => !gameStore.opponentName)
+const pendingMove = ref(null)
+const waiting = ref(
+  !opponentName.value || opponentName.value === '等待对手加入...'
+)
 const lastMove = ref(null)
 const moveAnalysisHistory = ref([])
 const reviews = ref([])
@@ -108,7 +117,9 @@ const displayBoard = computed(() => {
 const unsubFns = []
 
 onMounted(() => {
+  console.log('[GameView] mounted, ws connected:', wsClient.isConnected(), 'opponentName:', opponentName.value, 'gameStore.opponentName:', gameStore.opponentName)
   if (!wsClient.isConnected()) {
+    console.log('[GameView] reconnecting ws...')
     wsClient.connect(playerName.value, authStore.accessToken)
   }
 
@@ -126,18 +137,80 @@ onMounted(() => {
     whiteMoveCount.value = pending.moveHistory.filter(m => m.player === 2).length
   }
 
+  function triggerEntry(name, title) {
+    entryPlayerName.value = name
+    const t = title || { tier: 1, icon: '🥚', name: '初心者', cssClass: 'tier-1' }
+    opponentTitle.value = t
+    entryTier.value = t.tier || 1
+    showOpponentEntry.value = true
+  }
+
+  if (gameStore.opponentTitle) {
+    triggerEntry(opponentName.value, gameStore.opponentTitle)
+  }
+
   unsubFns.push(wsClient.on('room_joined', (msg) => {
+    console.log('[GameView] room_joined:', msg)
     opponentName.value = msg.opponent_name
     opponentTitle.value = msg.opponent_title || null
-    showOpponentEntry.value = true
-    setTimeout(() => showOpponentEntry.value = false, 1500)
+    waiting.value = false
+    triggerEntry(msg.opponent_name, msg.opponent_title)
   }))
 
   unsubFns.push(wsClient.on('opponent_joined', (msg) => {
+    console.log('[GameView] opponent_joined received:', msg.player_name, msg.player_title)
     opponentName.value = msg.player_name
     opponentTitle.value = msg.player_title || null
-    showOpponentEntry.value = true
-    setTimeout(() => showOpponentEntry.value = false, 1500)
+    waiting.value = false
+    triggerEntry(msg.player_name, msg.player_title)
+  }))
+
+  unsubFns.push(wsClient.on('reconnected', (msg) => {
+    console.log('[GameView] reconnected:', msg)
+    const oppColor = msg.player_color === 'black' ? 'white' : 'black'
+    const oppName = msg[`${oppColor}_name`]
+    if (oppName) {
+      opponentName.value = oppName
+      waiting.value = false
+    }
+    if (msg.opponent_title) {
+      opponentTitle.value = msg.opponent_title
+      triggerEntry(oppName || opponentName.value, msg.opponent_title)
+    }
+    if (msg.board) {
+      board.value = _parseBoard(msg.board)
+      currentTurn.value = msg.current_turn
+      moveHistory.value = (msg.move_history || []).map(m => ({ ...m }))
+      moveCount.value = msg.move_history.length
+      lastMove.value = _lastFromHistory(msg.move_history)
+      blackMoveCount.value = msg.move_history.filter(m => m.player === BLACK).length
+      whiteMoveCount.value = msg.move_history.filter(m => m.player === WHITE).length
+    }
+    if (msg.black_time) blackTime.value = msg.black_time
+    if (msg.white_time) whiteTime.value = msg.white_time
+  }))
+
+  unsubFns.push(wsClient.on('sync_room', (msg) => {
+    console.log('[GameView] sync_room:', msg)
+    if (msg.opponent_name && msg.opponent_name !== '等待对手加入...') {
+      opponentName.value = msg.opponent_name
+      waiting.value = false
+    }
+    if (msg.opponent_title) {
+      opponentTitle.value = msg.opponent_title
+    }
+    if (msg.board) {
+      board.value = _parseBoard(msg.board)
+      currentTurn.value = msg.current_turn
+      myTurn.value = msg.your_turn
+      moveHistory.value = (msg.move_history || []).map(m => ({ ...m }))
+      moveCount.value = msg.move_history.length
+      lastMove.value = _lastFromHistory(msg.move_history)
+      blackMoveCount.value = msg.move_history.filter(m => m.player === BLACK).length
+      whiteMoveCount.value = msg.move_history.filter(m => m.player === WHITE).length
+    }
+    if (msg.black_time) blackTime.value = msg.black_time
+    if (msg.white_time) whiteTime.value = msg.white_time
   }))
 
   unsubFns.push(wsClient.on('game_state', (msg) => {
@@ -152,7 +225,7 @@ onMounted(() => {
   }))
 
   unsubFns.push(wsClient.on('stone_placed', (msg) => {
-    audioManager.playStone()
+    audioManager.playGomokuStone()
     const r = msg.row, c = msg.col
     const p = msg.player === 'black' ? BLACK : WHITE
     board.value = board.value.map((row, ri) =>
@@ -215,6 +288,7 @@ onMounted(() => {
 
   unsubFns.push(wsClient.on('opponent_left', (msg) => {
     opponentName.value = msg.message || '对手离开了'
+    waiting.value = true
     gameOver.value = true
   }))
 
@@ -239,6 +313,12 @@ onMounted(() => {
   unsubFns.push(wsClient.on('reconnect_limit', () => {
     errorMsg.value = '无法连接服务器，请刷新页面重试'
   }))
+
+  setTimeout(() => {
+    if (wsClient.isConnected() && roomId) {
+      wsClient.send({ type: 'sync' })
+    }
+  }, 500)
 })
 
 function sendChat(text) {
@@ -247,8 +327,6 @@ function sendChat(text) {
 }
 
 onUnmounted(() => {
-  wsClient.send({ type: 'leave_room' })
-  wsClient.disconnect()
   unsubFns.forEach(fn => fn())
   gameStore.reset()
 })
@@ -270,8 +348,18 @@ function _lastFromHistory(history) {
 }
 
 function handlePlaceStone({ row, col }) {
-  if (gameOver.value || !myTurn.value || waiting.value) return
-  wsClient.send({ type: 'place_stone', row, col })
+  if (gameOver.value || !myTurn.value || waiting.value || pendingMove.value) return
+  pendingMove.value = { row, col }
+}
+
+function confirmMove() {
+  if (!pendingMove.value) return
+  wsClient.send({ type: 'place_stone', row: pendingMove.value.row, col: pendingMove.value.col })
+  pendingMove.value = null
+}
+
+function cancelMove() {
+  pendingMove.value = null
 }
 
 function handleUndo() {
@@ -417,9 +505,12 @@ function replayPrev() { if (replayStep.value >= 0) replayStep.value-- }
           :board-image="authStore.boardImage"
           :current-turn="getStoneName(currentTurn === 'black' ? BLACK : WHITE)"
           :game-over="gameOver"
-          :readonly="!myTurn || gameOver || replayMode || waiting"
+          :readonly="!myTurn || gameOver || replayMode || waiting || !!pendingMove"
           :last-move="replayMode ? (replayStep >= 0 ? { row: moveHistory[replayStep]?.row, col: moveHistory[replayStep]?.col } : null) : lastMove"
+          :preview-pos="pendingMove"
           @place-stone="handlePlaceStone"
+          @confirm-place="confirmMove"
+          @cancel-place="cancelMove"
         />
       </div>
 
@@ -486,10 +577,13 @@ function replayPrev() { if (replayStep.value >= 0) replayStep.value-- }
           :board-image="authStore.boardImage"
           :current-turn="getStoneName(currentTurn === 'black' ? BLACK : WHITE)"
           :game-over="gameOver"
-          :readonly="!myTurn || gameOver || replayMode || waiting"
+          :readonly="!myTurn || gameOver || replayMode || waiting || !!pendingMove"
           :last-move="replayMode ? (replayStep >= 0 ? { row: moveHistory[replayStep]?.row, col: moveHistory[replayStep]?.col } : null) : lastMove"
+          :preview-pos="pendingMove"
           :parent-width="mobileBoardWidth"
           @place-stone="handlePlaceStone"
+          @confirm-place="confirmMove"
+          @cancel-place="cancelMove"
         />
       </div>
 
@@ -562,6 +656,13 @@ function replayPrev() { if (replayStep.value >= 0) replayStep.value-- }
       </div>
     </div>
   </Teleport>
+  <EntranceBanner
+    :show="showOpponentEntry"
+    :title="opponentTitle || {}"
+    :player-name="entryPlayerName"
+    :tier="entryTier"
+    @done="showOpponentEntry = false"
+  />
 </template>
 
 <style scoped>

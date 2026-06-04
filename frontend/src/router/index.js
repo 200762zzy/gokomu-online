@@ -70,6 +70,41 @@ const routes = [
     name: 'AiGame',
     component: () => import('../views/AiGameView.vue'),
   },
+
+  // Ludo routes
+  {
+    path: '/ludo/lobby',
+    name: 'LudoLobby',
+    component: () => import('../views/LudoLobby.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/ludo/game/:roomId',
+    name: 'LudoGame',
+    component: () => import('../views/LudoGame.vue'),
+    meta: { requiresAuth: true },
+    props: true,
+  },
+
+  // Chinese Chess routes
+  {
+    path: '/chess/local',
+    name: 'ChessLocal',
+    component: () => import('../views/ChineseChessLocal.vue'),
+  },
+  {
+    path: '/chess/lobby',
+    name: 'ChessLobby',
+    component: () => import('../views/ChineseChessLobby.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/chess/game/:roomId',
+    name: 'ChessGame',
+    component: () => import('../views/ChineseChessOnline.vue'),
+    meta: { requiresAuth: true },
+    props: true,
+  },
 ]
 
 const router = createRouter({

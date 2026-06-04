@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { audioManager } from '../services/audioManager.js'
+import ChangelogModal from '../components/ChangelogModal.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -11,6 +12,14 @@ const savedGames = ref([])
 const showAiDialog = ref(false)
 const aiDifficulty = ref('easy')
 const aiColor = ref('black')
+const activeTab = ref('comp')
+const showChangelog = ref(false)
+const guestBannerHidden = ref(localStorage.getItem('hide_guest_banner') === '1')
+
+function dismissBanner() {
+  guestBannerHidden.value = true
+  localStorage.setItem('hide_guest_banner', '1')
+}
 
 const networkUrl = computed(() => {
   const ip = window.LAN_IP
@@ -77,49 +86,110 @@ onMounted(loadHistory)
       <span class="network-copy">复制</span>
     </div>
 
-    <div class="card game-card" @click="audioManager.playClick(); router.push('/local-game')">
-      <h2>本地对战</h2>
-      <p class="subtitle">双人同屏</p>
-      <button class="btn-primary" @click.stop="audioManager.playClick(); router.push('/local-game')">
-        开始游戏
-      </button>
+    <div v-if="!authStore.isAuthenticated && !guestBannerHidden" class="guest-banner">
+      <div class="banner-content">
+        <span class="banner-icon">✨</span>
+        <span class="banner-text">注册账号即可体验在线对战、排行榜、好友对战等完整功能</span>
+        <button class="banner-btn" @click="router.push('/login')">去注册</button>
+      </div>
+      <button class="banner-close" @click="dismissBanner">✕</button>
     </div>
-    <div class="card online-card" @click="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/lobby' : '/login?redirect=/lobby')">
-      <h2>在线对战</h2>
-      <p class="subtitle">联网匹配</p>
-      <button class="btn-online" @click.stop="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/lobby' : '/login?redirect=/lobby')">
-        创建 / 加入
-      </button>
+
+    <div class="welcome-section">
+      <h1 class="welcome-title">
+        {{ authStore.isAuthenticated ? `欢迎回来，${authStore.username}` : '欢迎来到 弈棋' }}
+      </h1>
+      <p class="welcome-sub">竞技 &amp; 娱乐 对战平台</p>
     </div>
-    <div class="card ai-card" @click="audioManager.playClick(); showAiDialog = true">
-      <h2>人机对战</h2>
-      <p class="subtitle">AI 陪练</p>
-      <button class="btn-ai" @click.stop="audioManager.playClick(); showAiDialog = true">
-        开始挑战
+
+    <div class="tab-bar">
+      <button
+        :class="['tab-btn', { active: activeTab === 'comp' }]"
+        @click="audioManager.playClick(); activeTab = 'comp'"
+      >
+        <span class="tab-icon">🏆</span>
+        <span class="tab-label">竞技</span>
+      </button>
+      <button
+        :class="['tab-btn', { active: activeTab === 'fun' }]"
+        @click="audioManager.playClick(); activeTab = 'fun'"
+      >
+        <span class="tab-icon">🎲</span>
+        <span class="tab-label">娱乐</span>
       </button>
     </div>
 
-    <div class="rules-card">
-      <h3>游戏规则</h3>
-      <ul>
-        <li>15×15 标准棋盘，黑棋先手</li>
-        <li>两名玩家轮流在同一台电脑落子</li>
-        <li>五子连珠（横/竖/斜）获胜</li>
-        <li>支持悔棋、认输、和棋</li>
-        <li>对局结束后可回放复盘</li>
-        <li>每步落子后自动请求AI分析</li>
-      </ul>
-    </div>
+    <template v-if="activeTab === 'comp'">
+      <div class="section-label">五子棋</div>
 
-    <div class="tutorial-card">
-      <h3>联机教程</h3>
-      <ol>
-        <li>启动服务者双击 <code>GomokuOnline.exe</code> 或 <code>start.bat</code></li>
-        <li>将上方显示的 <b>局域网地址</b> 发给同一局域网的朋友</li>
-        <li>朋友在浏览器中打开该地址</li>
-        <li>双方都点击「在线对战」→ 一人创建房间，一人输入房间号加入</li>
-      </ol>
-    </div>
+      <div class="card game-card" @click="audioManager.playClick(); router.push('/local-game')">
+        <h2>本地对战</h2>
+        <p class="subtitle">双人同屏</p>
+        <button class="btn-primary" @click.stop="audioManager.playClick(); router.push('/local-game')">
+          开始游戏
+        </button>
+      </div>
+      <div class="card online-card" @click="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/lobby' : '/login?redirect=/lobby')">
+        <h2>在线对战</h2>
+        <p class="subtitle">联网匹配</p>
+        <button class="btn-online" @click.stop="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/lobby' : '/login?redirect=/lobby')">
+          创建 / 加入
+        </button>
+      </div>
+      <div class="card ai-card" @click="audioManager.playClick(); showAiDialog = true">
+        <h2>人机对战</h2>
+        <p class="subtitle">AI 陪练</p>
+        <button class="btn-ai" @click.stop="audioManager.playClick(); showAiDialog = true">
+          开始挑战
+        </button>
+      </div>
+
+      <div class="rules-card">
+        <h3>五子棋规则</h3>
+        <ul>
+          <li>15×15 标准棋盘，黑棋先手</li>
+          <li>两名玩家轮流落子</li>
+          <li>五子连珠（横/竖/斜）获胜</li>
+          <li>支持悔棋、认输、和棋</li>
+          <li>对局结束后可回放复盘</li>
+          <li>每步落子后自动请求AI分析</li>
+        </ul>
+      </div>
+
+      <div class="section-label">中国象棋</div>
+
+      <div class="card chess-card" @click="audioManager.playClick(); router.push('/chess/local')">
+        <h2>象棋·本地</h2>
+        <p class="subtitle">双人同屏</p>
+        <button class="btn-chess" @click.stop="audioManager.playClick(); router.push('/chess/local')">
+          开始对弈
+        </button>
+      </div>
+      <div class="card chess-card" @click="audioManager.playClick(); router.push('/chess/local?ai=true&difficulty=easy')">
+        <h2>象棋·人机</h2>
+        <p class="subtitle">AI 陪练</p>
+        <button class="btn-chess" @click.stop="audioManager.playClick(); router.push('/chess/local?ai=true&difficulty=easy')">
+          开始挑战
+        </button>
+      </div>
+      <div class="card chess-online-card" @click="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/chess/lobby' : '/login?redirect=/chess/lobby')">
+        <h2>象棋·在线</h2>
+        <p class="subtitle">联网对战</p>
+        <button class="btn-chess-online" @click.stop="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/chess/lobby' : '/login?redirect=/chess/lobby')">
+          创建 / 加入
+        </button>
+      </div>
+    </template>
+
+    <template v-if="activeTab === 'fun'">
+      <div class="card ludo-card" @click="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/ludo/lobby' : '/login?redirect=/ludo/lobby')">
+        <h2>飞行棋·在线</h2>
+        <p class="subtitle">四人欢乐对战</p>
+        <button class="btn-ludo" @click.stop="audioManager.playClick(); router.push(authStore.isAuthenticated ? '/ludo/lobby' : '/login?redirect=/ludo/lobby')">
+          创建 / 加入
+        </button>
+      </div>
+    </template>
 
     <Teleport to="body">
       <div v-if="showAiDialog" class="overlay" @click.self="showAiDialog = false">
@@ -181,26 +251,113 @@ onMounted(loadHistory)
         <span class="history-time">{{ game.timestamp }}</span>
       </div>
     </div>
+
+    <div class="footer-links">
+      <button class="changelog-link" @click="audioManager.playClick(); showChangelog = true">
+        📋 查看更新日志
+      </button>
+    </div>
   </div>
+
+  <ChangelogModal :show="showChangelog" @close="showChangelog = false" />
 </template>
 
 <style scoped>
 .home-container {
   width: 100%;
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 16px;
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
 }
 
-@media (max-width: 768px) {
-  .home-container {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
+.welcome-section {
+  text-align: center;
+  padding: 20px 0 4px;
+}
+
+.welcome-title {
+  font-size: 1.6rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #667eea, #764ba2, #e74c3c);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 6px;
+}
+
+.welcome-sub {
+  font-size: 0.9rem;
+  color: #888;
+}
+
+.guest-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.banner-icon {
+  font-size: 1.2rem;
+}
+
+.banner-text {
+  font-size: 0.85rem;
+  color: #ccc;
+  flex: 1;
+}
+
+.banner-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.banner-btn:hover {
+  opacity: 0.9;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  margin-left: 8px;
+  border-radius: 4px;
+}
+
+.banner-close:hover {
+  background: rgba(255,255,255,0.1);
+  color: #eee;
 }
 
 .network-card {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -256,8 +413,29 @@ onMounted(loadHistory)
   transition: transform 0.2s, border-color 0.2s;
 }
 .card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(102, 126, 234, 0.3);
+  transform: translateY(-4px) scale(1.01);
+  border-color: rgba(102, 126, 234, 0.5);
+  box-shadow: 0 8px 30px rgba(102, 126, 234, 0.15);
+}
+
+.game-card:hover {
+  box-shadow: 0 8px 30px rgba(102, 126, 234, 0.2);
+}
+
+.online-card:hover {
+  box-shadow: 0 8px 30px rgba(78, 205, 196, 0.15);
+}
+
+.ai-card:hover {
+  box-shadow: 0 8px 30px rgba(118, 75, 162, 0.2);
+}
+
+.chess-card:hover {
+  box-shadow: 0 8px 30px rgba(231, 76, 60, 0.2);
+}
+
+.chess-online-card:hover {
+  box-shadow: 0 8px 30px rgba(142, 68, 173, 0.2);
 }
 
 .card h2 {
@@ -434,7 +612,6 @@ onMounted(loadHistory)
 }
 
 .history-card {
-  grid-column: 1 / -1;
   background: rgba(22, 33, 62, 0.85);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -506,39 +683,143 @@ onMounted(loadHistory)
   font-size: 0.75rem;
 }
 
-.tutorial-card {
-  background: rgba(22, 33, 62, 0.85);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  padding: 20px;
+.tab-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
-
-.tutorial-card h3 {
-  font-size: 1rem;
-  margin-bottom: 12px;
-  color: #4ecdc4;
+.tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  background: rgba(22,33,62,0.7);
+  color: #888;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 600;
+  transition: all 0.2s;
 }
-
-.tutorial-card ol {
-  list-style: decimal;
-  padding-left: 20px;
+.tab-btn.active {
+  background: rgba(102,126,234,0.15);
+  border-color: #667eea;
+  color: #fff;
 }
-
-.tutorial-card li {
-  margin-bottom: 8px;
-  font-size: 0.85rem;
-  color: #ccc;
-  line-height: 1.5;
+.tab-btn:hover:not(.active) {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.15);
 }
-
-.tutorial-card code {
-  background: #0f3460;
-  padding: 2px 6px;
-  border-radius: 4px;
+.tab-icon { font-size: 1.3rem; }
+.section-label {
+  font-size: 0.8rem;
+  font-weight: 600;
   color: #667eea;
-  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  padding: 4px 0 0;
+  border-bottom: 1px solid rgba(102,126,234,0.15);
+}
+
+.chess-card {
+  border-color: rgba(231, 76, 60, 0.2);
+}
+.chess-card:hover {
+  border-color: rgba(231, 76, 60, 0.5);
+}
+.chess-card h2 {
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.btn-chess {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn-chess:hover { opacity: 0.9; }
+
+.chess-online-card {
+  border-color: rgba(142, 68, 173, 0.2);
+}
+.chess-online-card:hover {
+  border-color: rgba(142, 68, 173, 0.5);
+}
+.chess-online-card h2 {
+  background: linear-gradient(135deg, #8e44ad, #9b59b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.btn-chess-online {
+  width: 100%;
+  padding: 12px;
+  background: rgba(142, 68, 173, 0.2);
+  border: 1px solid #8e44ad;
+  color: #c9a0f0;
+  font-size: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-top: 10px;
+}
+.btn-chess-online:hover {
+  opacity: 0.9;
+}
+
+.ludo-divider {
+  background: linear-gradient(90deg, transparent, #e67e22, transparent) !important;
+  color: #e67e22 !important;
+  margin-top: 20px !important;
+}
+
+.ludo-card {
+  background: linear-gradient(135deg, rgba(230,126,34,0.12), rgba(243,156,18,0.08)) !important;
+  border-color: rgba(230,126,34,0.3) !important;
+}
+.ludo-card:hover {
+  border-color: rgba(230,126,34,0.6) !important;
+  box-shadow: 0 4px 20px rgba(230,126,34,0.15);
+}
+.ludo-card h2 {
+  background: linear-gradient(135deg, #e67e22, #f39c12);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.btn-ludo {
+  width: 100%; padding: 10px; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, #e67e22, #f39c12);
+  color: #fff; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+}
+.btn-ludo:hover { opacity: 0.9; }
+
+.footer-links {
+  text-align: center;
+  padding: 12px 0 4px;
+}
+
+.changelog-link {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #888;
+  padding: 6px 18px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.changelog-link:hover {
+  border-color: #667eea;
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.08);
 }
 
 </style>

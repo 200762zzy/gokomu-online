@@ -25,6 +25,7 @@ Thumbs.db
 # PyInstaller artifacts
 backend/build/
 backend/*.spec
+/GomokuOnline.spec
 build/
 
 # Stale frontend copy in backend

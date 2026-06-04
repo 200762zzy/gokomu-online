@@ -94,7 +94,7 @@ function commitMove(row, col, p) {
   if (p === BLACK) blackMoveCount.value++
   else whiteMoveCount.value++
 
-  audioManager.playStone()
+  audioManager.playGomokuStone()
 
   const win = checkWin(board.value, row, col)
   if (win !== null) {

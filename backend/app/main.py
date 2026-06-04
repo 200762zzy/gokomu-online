@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -13,7 +13,10 @@ from .database import init_db
 from .models import AnalyzeRequest, EvaluateRequest, AiMoveRequest, AiMoveResponse
 from .ai_analysis import request_analysis, request_review, request_ai_move
 from .routers import auth_router, users_router, games_router, friends_router, admin_router
+from .chinese_chess.routers import router as cc_router
 from .ws.handler import handle_websocket
+from .chinese_chess.room_manager import handle_cc_websocket
+from .ludo.routers import handle_ludo_websocket
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,7 +33,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Gomoku Online API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="YiQi API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,6 +48,17 @@ app.include_router(users_router)
 app.include_router(games_router)
 app.include_router(friends_router)
 app.include_router(admin_router)
+app.include_router(cc_router)
+
+
+@app.websocket("/ws/cc")
+async def websocket_cc(ws: WebSocket):
+    await handle_cc_websocket(ws)
+
+
+@app.websocket("/ws/ludo")
+async def websocket_ludo(ws: WebSocket):
+    await handle_ludo_websocket(ws)
 
 
 @app.websocket("/ws")
@@ -100,6 +114,39 @@ async def ngrok_url():
             url = f.read().strip()
             return {"url": url}
     return {"url": None}
+
+@app.get("/api/ludo/rooms")
+async def list_ludo_rooms():
+    from .ludo.room_manager import manager as ludo_manager
+    return ludo_manager.list_open_rooms()
+
+@app.get("/api/my-active-room")
+async def my_active_room(request: Request):
+    from .services.auth_service import verify_token
+    token = request.headers.get("authorization", "").replace("Bearer ", "")
+    uid = verify_token(token, "access")
+    if not uid:
+        return {"game_type": None, "room_id": None}
+
+    # Check Gomoku
+    from .room_manager import room_manager
+    room, _ = room_manager.find_room_by_user_id(uid)
+    if room:
+        return {"game_type": "gomoku", "room_id": room.id}
+
+    # Check Chinese Chess
+    from .chinese_chess.room_manager import cc_room_manager
+    room, _ = cc_room_manager.find_room_by_user_id(uid)
+    if room:
+        return {"game_type": "cc", "room_id": room.id}
+
+    # Check Ludo
+    from .ludo.room_manager import manager as ludo_manager
+    room, _ = ludo_manager.find_room_by_user_id(uid)
+    if room:
+        return {"game_type": "ludo", "room_id": room.id}
+
+    return {"game_type": None, "room_id": None}
 
 @app.get("/api/health")
 async def health():

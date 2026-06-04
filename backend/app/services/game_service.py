@@ -16,6 +16,7 @@ async def save_game(
     reason: str | None,
     moves: list[dict],
     reviews: list[dict] | None = None,
+    game_type: str = "gomoku",
 ) -> GameRecord:
     black_user = await db.get(User, black_id)
     white_user = await db.get(User, white_id)
@@ -38,6 +39,7 @@ async def save_game(
     white_user.elo = new_white_elo
 
     record = GameRecord(
+        game_type=game_type,
         black_id=black_id,
         white_id=white_id,
         winner=winner,
@@ -57,12 +59,16 @@ async def save_game(
 
 
 async def get_user_games(
-    db: AsyncSession, user_id: int, page: int = 1, limit: int = 20
+    db: AsyncSession, user_id: int, page: int = 1, limit: int = 20,
+    game_type: str | None = None,
 ) -> tuple[list[GameRecord], int]:
     offset = (page - 1) * limit
+    conditions = (GameRecord.black_id == user_id) | (GameRecord.white_id == user_id)
+    if game_type:
+        conditions = (GameRecord.game_type == game_type) & conditions
     query = (
         select(GameRecord)
-        .where((GameRecord.black_id == user_id) | (GameRecord.white_id == user_id))
+        .where(conditions)
         .order_by(GameRecord.started_at.desc())
         .offset(offset)
         .limit(limit)
@@ -70,9 +76,7 @@ async def get_user_games(
     result = await db.execute(query)
     games = list(result.scalars().all())
 
-    count_query = select(func.count()).select_from(GameRecord).where(
-        (GameRecord.black_id == user_id) | (GameRecord.white_id == user_id)
-    )
+    count_query = select(func.count()).select_from(GameRecord).where(conditions)
     count_result = await db.execute(count_query)
     total = count_result.scalar() or 0
 
